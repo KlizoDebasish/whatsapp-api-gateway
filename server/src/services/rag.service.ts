@@ -286,11 +286,11 @@ export class RagService {
     try {
       const biz = await prisma.businessAccount.findUnique({
         where: { id: businessId },
-        select: { category: true, name: true }
+        select: { category: true, businessName: true }
       });
       if (biz) {
         if (!category) category = biz.category;
-        if (biz.name) businessName = biz.name;
+        if (biz.businessName) businessName = biz.businessName;
       }
     } catch (e) {}
     category = category || 'General';
@@ -433,6 +433,12 @@ export class RagService {
       similarity: number;
       docName: string;
     }>;
+    contextChunks?: Array<{
+      text: string;
+      similarity: number;
+      docName: string;
+    }>;
+    model?: string;
   }> {
     const { businessId, query, limit = 4 } = params;
     const queryVector = await RagService.generateEmbedding(query);

@@ -243,6 +243,8 @@ export class AuthService {
           name: catItem.name,
           category: catItem.category,
           price: Number(catItem.price),
+          stock: catItem.stock ?? 100,
+          unit: catItem.unit ?? 'unit',
           description: catItem.description || ''
         }).catch(() => null);
       } catch (e) {}
@@ -441,7 +443,7 @@ export class AuthService {
             createdAt: userRow.createdAt
           }
         : null,
-      account: AuthService.formatAccount(account, userRow?.domain || account.domain || clean)
+      account: AuthService.formatAccount(account, userRow?.domain || (account as any).domain || clean)
     };
   }
 }

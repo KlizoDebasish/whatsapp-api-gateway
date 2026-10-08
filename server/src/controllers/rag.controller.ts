@@ -115,7 +115,7 @@ export class RagController {
       }
 
       const result = await RagService.deleteDocument(businessId, id);
-      res.json({ success: true, message: 'Document deleted from vector memory', ...result });
+      res.json({ message: 'Document deleted from vector memory', ...result });
     } catch (err) {
       next(err);
     }
