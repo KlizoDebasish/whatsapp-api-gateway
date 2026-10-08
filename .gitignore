@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Next.js
+client/.next/
+client/out/
+
+# Backend build
+server/dist/
+
+# WhatsApp authentication
+server/whatsapp_auth_sessions/
+
+# Uploads
+server/uploads/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local IDE
+.vscode/
+.idea/
