@@ -1,3 +1,6 @@
+-- CreateExtension
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- CreateEnum
 CREATE TYPE "BusinessCategory" AS ENUM ('medicine', 'gym', 'grocery', 'electronics', 'restaurant', 'salon', 'custom');
 CREATE TYPE "SessionStatus" AS ENUM ('CONNECTED', 'CONNECTING', 'DISCONNECTED');
@@ -29,12 +32,26 @@ CREATE TABLE "business_accounts" (
     "enableStockQueries" BOOLEAN NOT NULL DEFAULT true,
     "allowedChats" TEXT NOT NULL DEFAULT '*',
     "apiKey" TEXT NOT NULL,
+    "domain" TEXT,
+    "password" TEXT,
     "webhookUrl" TEXT,
     "webhookSecret" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "business_accounts_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable: users
+CREATE TABLE "users" (
+    "id" TEXT NOT NULL,
+    "domain" TEXT NOT NULL,
+    "password" TEXT NOT NULL,
+    "businessId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "users_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable: whatsapp_sessions
@@ -127,14 +144,14 @@ CREATE TABLE "orders" (
     CONSTRAINT "orders_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: catalog_embeddings with native float array (compatible with all PostgreSQL installs)
+-- CreateTable: catalog_embeddings
 CREATE TABLE "catalog_embeddings" (
     "id" TEXT NOT NULL,
     "businessId" TEXT NOT NULL,
     "catalogItemId" TEXT,
     "content" TEXT NOT NULL,
     "metadata" JSONB,
-    "embedding" DOUBLE PRECISION[] NOT NULL DEFAULT ARRAY[]::DOUBLE PRECISION[],
+    "embedding" DOUBLE PRECISION[] NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -143,18 +160,22 @@ CREATE TABLE "catalog_embeddings" (
 
 -- CreateIndexes
 CREATE UNIQUE INDEX "business_accounts_apiKey_key" ON "business_accounts"("apiKey");
-CREATE INDEX "catalog_items_businessId_name_idx" ON "catalog_items"("businessId", "name");
-CREATE INDEX "catalog_items_businessId_sku_idx" ON "catalog_items"("businessId", "sku");
+CREATE UNIQUE INDEX "business_accounts_domain_key" ON "business_accounts"("domain");
+CREATE UNIQUE INDEX "users_domain_key" ON "users"("domain");
+CREATE UNIQUE INDEX "users_businessId_key" ON "users"("businessId");
 CREATE UNIQUE INDEX "contacts_businessId_phone_key" ON "contacts"("businessId", "phone");
 CREATE UNIQUE INDEX "orders_orderNumber_key" ON "orders"("orderNumber");
+CREATE INDEX "catalog_items_businessId_name_idx" ON "catalog_items"("businessId", "name");
+CREATE INDEX "catalog_items_businessId_sku_idx" ON "catalog_items"("businessId", "sku");
 CREATE INDEX "catalog_embeddings_businessId_idx" ON "catalog_embeddings"("businessId");
 
 -- Foreign Key Constraints
+ALTER TABLE "users" ADD CONSTRAINT "users_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "business_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "whatsapp_sessions" ADD CONSTRAINT "whatsapp_sessions_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "business_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "catalog_items" ADD CONSTRAINT "catalog_items_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "business_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "contacts" ADD CONSTRAINT "contacts_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "business_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "chat_messages" ADD CONSTRAINT "chat_messages_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "contacts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "orders" ADD CONSTRAINT "orders_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "business_accounts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-ALTER TABLE "orders" ADD CONSTRAINT "orders_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "contacts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "orders" ADD CONSTRAINT "orders_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "business_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "orders" ADD CONSTRAINT "orders_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "contacts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "catalog_embeddings" ADD CONSTRAINT "catalog_embeddings_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "business_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "catalog_embeddings" ADD CONSTRAINT "catalog_embeddings_catalogItemId_fkey" FOREIGN KEY ("catalogItemId") REFERENCES "catalog_items"("id") ON DELETE CASCADE ON UPDATE CASCADE;
