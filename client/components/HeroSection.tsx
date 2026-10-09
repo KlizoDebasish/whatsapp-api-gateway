@@ -60,7 +60,7 @@ export default function HeroSection({ onOpenWizard, onScrollToDemo }: HeroSectio
         <div className="flex justify-center mb-6">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-100/80 border border-emerald-300 text-emerald-800 text-xs font-bold shadow-xs">
             <span className="flex h-2 w-2 rounded-full bg-emerald-600 animate-ping" />
-            <span>Universal WhatsApp Automation • Zero Meta Fees • Built for Any Business</span>
+            <span>MsgNexa API • Messaging APIs · AI Agents · RAG · Webhooks · Automation</span>
           </div>
         </div>
 
@@ -174,11 +174,11 @@ export default function HeroSection({ onOpenWizard, onScrollToDemo }: HeroSectio
                   </div>
                   <div>
                     <p className="text-xs font-bold text-white">{currentTemplate.title}</p>
-                    <p className="text-[10px] text-emerald-400 font-medium">MessageAPI Autonomous Assistant</p>
+                    <p className="text-[10px] text-emerald-400 font-medium">MsgNexa Autonomous Assistant</p>
                   </div>
                 </div>
                 <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded-[5px] border border-slate-700 text-emerald-400 font-mono font-bold">
-                  MessageAPI Live
+                  MsgNexa Live
                 </span>
               </div>
 

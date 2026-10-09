@@ -60,10 +60,12 @@ export interface ChatMessage {
   id: string;
   sender: "customer" | "business" | "system";
   text: string;
+  messageType?: "text" | "image" | "audio" | "document" | "video";
   mediaUrl?: string;
   timestamp: string;
   isAiGenerated?: boolean;
   status?: "sent" | "delivered" | "read" | "typing";
+  isPinned?: boolean;
 }
 
 export interface BusinessTemplate {

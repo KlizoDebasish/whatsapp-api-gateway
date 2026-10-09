@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { BusinessCategory, BUSINESS_TEMPLATES, BusinessAccount, ChatMessage } from "@/lib/types";
 import { generateSimulatedReply } from "@/lib/storage";
+import { WhatsAppText } from "./WhatsAppText";
+import { ChatImageAttachment } from "./ChatImageAttachment";
 
 interface LiveDemoProps {
   onOpenWizard: (category?: BusinessCategory) => void;
@@ -177,7 +179,7 @@ export default function InteractiveLiveDemo({ onOpenWizard }: LiveDemoProps) {
           </h2>
 
           <p className="text-sm sm:text-base text-slate-600 font-medium max-w-3xl mx-auto leading-relaxed">
-            Experience how smoothly MessageAPI engages customers for <strong>ANY business owner, product creator, agency, or company</strong>. Type any question, check live inventory, or test simulated audio voice notes in real-time!
+            Experience how smoothly MsgNexa engages customers for <strong>ANY business owner, product creator, agency, or company</strong>. Type any question, check live inventory, or test simulated audio voice notes in real-time!
           </p>
         </div>
 
@@ -250,6 +252,34 @@ export default function InteractiveLiveDemo({ onOpenWizard }: LiveDemoProps) {
                 </button>
               </div>
 
+              {/* AI Image Generation Tester Button */}
+              <div className="pt-1">
+                <button
+                  onClick={() => {
+                    const sampleSubject =
+                      activeCategory === "gym"
+                        ? "Please generate a gym equipment image"
+                        : activeCategory === "medicine"
+                        ? "Please generate an organized pharmacy medicine shelves image"
+                        : activeCategory === "grocery"
+                        ? "Please generate a fresh organic fruits basket image"
+                        : activeCategory === "electronics"
+                        ? "Please generate a gaming battle station desk image"
+                        : activeCategory === "restaurant"
+                        ? "Please generate a signature gourmet biryani platter image"
+                        : activeCategory === "salon"
+                        ? "Please generate a luxury spa hair makeover salon image"
+                        : "Please generate an image of our business office";
+                    handleSendMessage(sampleSubject);
+                  }}
+                  disabled={isTyping}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-[5px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold shadow-md shadow-emerald-500/20 transition-all cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                  <span>🎨 Test 1024×1024 AI Image Generation</span>
+                </button>
+              </div>
+
               {/* Anti-Ban Status Info */}
               <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-xs space-y-1">
                 <div className="flex items-center gap-1.5 font-bold text-emerald-900">
@@ -272,9 +302,9 @@ export default function InteractiveLiveDemo({ onOpenWizard }: LiveDemoProps) {
             </button>
           </div>
 
-          {/* Right Column: MessageAPI Interactive Console View */}
+          {/* Right Column: MsgNexa Interactive Console View */}
           <div className="lg:col-span-7 bg-slate-950 rounded-3xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col h-[560px] relative">
-            {/* MessageAPI Console Header Bar */}
+            {/* MsgNexa Console Header Bar */}
             <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 text-white flex items-center justify-between shadow-md flex-shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-[5px] bg-gradient-to-tr from-emerald-600 to-teal-600 flex items-center justify-center font-bold text-xs text-white shadow-md">
@@ -285,7 +315,7 @@ export default function InteractiveLiveDemo({ onOpenWizard }: LiveDemoProps) {
                     {currentTemplate.title}
                   </h5>
                   <p className="text-[10px] text-emerald-400">
-                    {isTyping ? "MessageAPI composing reply..." : "MessageAPI Autonomous Engine • Online"}
+                    {isTyping ? "MsgNexa composing reply..." : "MsgNexa Autonomous Engine • Online"}
                   </p>
                 </div>
               </div>
@@ -314,6 +344,11 @@ export default function InteractiveLiveDemo({ onOpenWizard }: LiveDemoProps) {
             <div ref={chatContainerRef} className="flex-1 p-4 overflow-y-auto space-y-3 bg-slate-900/50">
               {messages.map((msg) => {
                 const isUser = msg.sender === "customer";
+                const imageUrlMatch = msg.text.match(/\[IMAGE_URL:\s*(https?:\/\/[^\]\s]+)\]/i);
+                const resolvedImageUrl = imageUrlMatch ? imageUrlMatch[1] : (msg.mediaUrl || "");
+                const hasImage = !!resolvedImageUrl || msg.messageType === "image";
+                const cleanedText = msg.text.replace(/\[IMAGE_URL:\s*https?:\/\/[^\]\s]+\]/gi, "").trim();
+
                 return (
                   <div key={msg.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
                     <div
@@ -323,7 +358,20 @@ export default function InteractiveLiveDemo({ onOpenWizard }: LiveDemoProps) {
                           : "bg-slate-800 text-slate-100 rounded-tl-xs border border-slate-700"
                       }`}
                     >
-                      <p className="whitespace-pre-line leading-relaxed font-sans">{msg.text}</p>
+                      {hasImage && resolvedImageUrl && (
+                        <div className="mb-2">
+                          <ChatImageAttachment
+                            imageUrl={resolvedImageUrl}
+                            caption={cleanedText}
+                            isUser={isUser}
+                          />
+                        </div>
+                      )}
+                      {cleanedText ? (
+                        <div className="whitespace-pre-line leading-relaxed font-sans">
+                          <WhatsAppText text={cleanedText} />
+                        </div>
+                      ) : null}
                       <div className="flex items-center justify-end gap-1 text-[9px] text-slate-400 mt-1">
                         <span className={isUser ? "text-emerald-100" : "text-slate-400"}>{msg.timestamp}</span>
                         {isUser && <CheckCheck className="w-3 h-3 text-emerald-200" />}

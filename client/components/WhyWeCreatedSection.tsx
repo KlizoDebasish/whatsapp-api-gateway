@@ -34,7 +34,7 @@ export default function WhyWeCreatedSection({ onOpenWizard }: WhyCreatedProps) {
       icon: Globe,
       badge: "100% Universal Compatibility",
       color: "from-emerald-600 to-teal-600",
-      description: "No matter what you sell, build, or offer — MessageAPI connects your product catalog, booking schedule, or customer support directly to WhatsApp.",
+      description: "No matter what you sell, build, or offer — MsgNexa connects your product catalog, booking schedule, or customer support directly to WhatsApp.",
       benefits: [
         "Works seamlessly for ANY product owner, local shop, startup, service agency, or enterprise",
         "Automates repetitive price checks, stock lookups, FAQs, and quote calculations instantly",
@@ -139,18 +139,18 @@ export default function WhyWeCreatedSection({ onOpenWizard }: WhyCreatedProps) {
           </div>
 
           <h2 className="text-3xl sm:text-5xl font-black text-slate-900 tracking-tight leading-tight">
-            Why MessageAPI Was Created:{" "}
+            Why MsgNexa Was Created:{" "}
             <span className="bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">
               Built For Every Business Owner, Product & Company
             </span>
           </h2>
 
           <p className="text-base text-slate-600 font-medium leading-relaxed max-w-3xl mx-auto">
-            Whether you are an established enterprise, a local shopkeeper, a software creator, a health clinic, a gym trainer, or an online brand — your customers are already on WhatsApp. We created MessageAPI to make customer communication <strong>smoother</strong>, <strong>frictionless</strong>, <strong>user-friendly</strong>, and <strong>100% automated</strong> without technical headaches or expensive per-message fees.
+            Whether you are an established enterprise, a local shopkeeper, a software creator, a health clinic, a gym trainer, or an online brand — your customers are already on WhatsApp. We created MsgNexa to make customer communication <strong>smoother</strong>, <strong>frictionless</strong>, <strong>user-friendly</strong>, and <strong>100% automated</strong> without technical headaches or expensive per-message fees.
           </p>
         </div>
 
-        {/* 4 Core Pillars: How MessageAPI Elevates Your Business */}
+        {/* 4 Core Pillars: How MsgNexa Elevates Your Business */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-sm space-y-3 hover:shadow-md transition-shadow">
             <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
@@ -198,7 +198,7 @@ export default function WhyWeCreatedSection({ onOpenWizard }: WhyCreatedProps) {
           <div className="text-center space-y-2">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 text-slate-800 text-xs font-bold">
               <Layers className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Explore How MessageAPI Adapts To Any Product, Company, Or Workflow:</span>
+              <span>Explore How MsgNexa Adapts To Any Product, Company, Or Workflow:</span>
             </div>
           </div>
 
@@ -267,7 +267,7 @@ export default function WhyWeCreatedSection({ onOpenWizard }: WhyCreatedProps) {
                 <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2.5 rounded-[5px] text-white flex items-center justify-between text-xs font-bold shadow-sm">
                   <div className="flex items-center gap-2">
                     <Sparkles className="w-3.5 h-3.5 text-white" />
-                    <span>MessageAPI Live Interaction</span>
+                    <span>MsgNexa Live Interaction</span>
                   </div>
                   <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-[5px] text-white font-medium">
                     24/7 AI Engine
@@ -288,7 +288,7 @@ export default function WhyWeCreatedSection({ onOpenWizard }: WhyCreatedProps) {
                     <div className="bg-slate-800 text-slate-100 p-3.5 rounded-2xl rounded-tl-xs max-w-[90%] shadow-md border border-slate-700 space-y-1">
                       <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold">
                         <Bot className="w-3.5 h-3.5" />
-                        <span>MessageAPI Assistant</span>
+                        <span>MsgNexa Assistant</span>
                       </div>
                       <p className="whitespace-pre-line leading-relaxed font-sans text-slate-200">{currentSegment.sampleReply}</p>
                       <span className="text-[9px] text-slate-400 block text-right mt-1">11:15 AM</span>

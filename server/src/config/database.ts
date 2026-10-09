@@ -27,7 +27,7 @@ export async function connectDatabase(): Promise<void> {
         console.log('ℹ️ Running in universal PostgreSQL vector mode (native array embeddings).');
       }
 
-      // Automatically migrate users table & domain/password columns if not present
+      // Automatically migrate users table & domain/password/isPinned columns if not present
       try {
         await client.query(`
           CREATE TABLE IF NOT EXISTS users (
@@ -40,8 +40,18 @@ export async function connectDatabase(): Promise<void> {
           );
           ALTER TABLE business_accounts ADD COLUMN IF NOT EXISTS domain TEXT UNIQUE;
           ALTER TABLE business_accounts ADD COLUMN IF NOT EXISTS password TEXT;
+          ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS "isPinned" BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE contacts ADD COLUMN IF NOT EXISTS "pinnedMessageId" TEXT;
         `);
-        console.log('🔐 User auth and domain schema verified / updated.');
+        console.log('🔐 User auth, domain, and message isPinned schema verified / updated.');
+
+        // Regenerate Prisma Client in background if needed
+        try {
+          const { exec } = await import('child_process');
+          exec('npx prisma generate', (err) => {
+            if (!err) console.log('✨ Prisma Client regenerated with isPinned & pinnedMessageId.');
+          });
+        } catch {}
       } catch (err: any) {
         console.warn('⚠️ User auth migration notice:', err.message);
       }

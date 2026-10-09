@@ -164,6 +164,7 @@ model Contact {
   unreadCount   Int             @default(0)
   isOnline      Boolean         @default(false)
   lastSeenAt    DateTime?
+  pinnedMessageId String?
   
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
@@ -185,6 +186,7 @@ model ChatMessage {
   mediaUrl      String?
   isAiGenerated Boolean         @default(false)
   status        MessageStatus   @default(SENT)
+  isPinned      Boolean         @default(false)
   timestamp     DateTime        @default(now())
 
   contact       Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)

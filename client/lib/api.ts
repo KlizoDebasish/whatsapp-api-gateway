@@ -3,6 +3,9 @@ import { BusinessAccount, CatalogItem, ChatMessage } from './types';
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 
+export const BACKEND_URL =
+  API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+
 export class MessageApiClient {
   private static getHeaders(apiKey?: string): HeadersInit {
     const headers: Record<string, string> = {
@@ -85,16 +88,32 @@ export class MessageApiClient {
     return res.json();
   }
 
-  public static async createSession(sessionId: string, sessionName: string, apiKey: string) {
+  public static async createSession(sessionId: string, sessionName: string, apiKey: string, isPrimary = true) {
     const res = await fetch(`${API_BASE_URL}/sessions`, {
       method: 'POST',
       headers: this.getHeaders(apiKey),
-      body: JSON.stringify({ sessionId, sessionName, isPrimary: true })
+      body: JSON.stringify({ sessionId, sessionName, isPrimary })
     });
     return res.json();
   }
 
-  public static async deleteSession(sessionId: string, apiKey: string, deleteData = true) {
+  public static async getSessionStatus(sessionId: string, apiKey: string) {
+    const res = await fetch(`${API_BASE_URL}/sessions/${sessionId}/status`, {
+      method: 'GET',
+      headers: this.getHeaders(apiKey)
+    });
+    return res.json();
+  }
+
+  public static async refreshQr(sessionId: string, apiKey: string) {
+    const res = await fetch(`${API_BASE_URL}/sessions/${sessionId}/refresh-qr`, {
+      method: 'POST',
+      headers: this.getHeaders(apiKey)
+    });
+    return res.json();
+  }
+
+  public static async deleteSession(sessionId: string, apiKey: string, deleteData = false) {
     const res = await fetch(`${API_BASE_URL}/sessions/${sessionId}?deleteData=${deleteData}`, {
       method: 'DELETE',
       headers: this.getHeaders(apiKey)
@@ -175,6 +194,22 @@ export class MessageApiClient {
   }
 
   /**
+   * Upload and AI-parse a PDF price sheet or catalog
+   */
+  public static async uploadCatalogPdf(params: {
+    fileName: string;
+    content: string;
+    defaultCategory?: string;
+  }, apiKey: string) {
+    const res = await fetch(`${API_BASE_URL}/catalog/upload-pdf`, {
+      method: 'POST',
+      headers: this.getHeaders(apiKey),
+      body: JSON.stringify(params)
+    });
+    return res.json();
+  }
+
+  /**
    * RAG & AI ERP Natural Language Queries
    */
   public static async queryErp(query: string, apiKey: string) {
@@ -225,9 +260,41 @@ export class MessageApiClient {
   }
 
   public static async getMessages(contactId: string, apiKey: string) {
-    const res = await fetch(`${API_BASE_URL}/messages/conversation/${contactId}`, {
+    const encodedId = encodeURIComponent(contactId);
+    const res = await fetch(`${API_BASE_URL}/messages/conversation/${encodedId}`, {
       method: 'GET',
       headers: this.getHeaders(apiKey)
+    });
+    return res.json();
+  }
+
+  public static async deleteContact(contactId: string, apiKey: string) {
+    const encodedId = encodeURIComponent(contactId);
+    const res = await fetch(`${API_BASE_URL}/messages/contacts/${encodedId}`, {
+      method: 'DELETE',
+      headers: this.getHeaders(apiKey)
+    });
+    return res.json();
+  }
+
+  public static async deleteMessages(messageIds: string[], apiKey: string) {
+    const res = await fetch(`${API_BASE_URL}/messages/batch-delete`, {
+      method: 'DELETE',
+      headers: this.getHeaders(apiKey),
+      body: JSON.stringify({ messageIds })
+    });
+    return res.json();
+  }
+
+  public static async togglePinMessage(params: {
+    contactId: string;
+    messageId: string;
+    isPinned?: boolean;
+  }, apiKey: string) {
+    const res = await fetch(`${API_BASE_URL}/messages/pin`, {
+      method: 'POST',
+      headers: this.getHeaders(apiKey),
+      body: JSON.stringify(params)
     });
     return res.json();
   }

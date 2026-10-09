@@ -13,6 +13,7 @@ import {
   Check, 
   Code, 
   ArrowLeft,
+  ArrowRight,
   ShieldCheck,
   Bot,
   RefreshCw,
@@ -53,12 +54,19 @@ import {
   Zap,
   AlertCircle,
   LogOut,
-  Globe
+  Globe,
+  Pin,
+  PinOff,
+  Download,
+  ExternalLink
 } from "lucide-react";
 import { BusinessAccount, BusinessCategory, CatalogItem, ChatMessage } from "@/lib/types";
 import { updateBusinessAccount, generateSimulatedReply } from "@/lib/storage";
-import { MessageApiClient } from "@/lib/api";
+import { MessageApiClient, BACKEND_URL } from "@/lib/api";
+import { WhatsAppText } from "./WhatsAppText";
+import { McpDocInfoTab } from "./McpDocInfoTab";
 import { generateQrSvgDataUrl } from "@/lib/qr";
+import { ChatImageAttachment } from "./ChatImageAttachment";
 
 interface WorkspaceProps {
   account: BusinessAccount;
@@ -75,7 +83,7 @@ function createWsMessageId(prefix: string): string {
   return `${prefix}_${wsMessageCounter}`;
 }
 
-type DashboardTab = "dashboard" | "settings" | "webqr" | "chat" | "session" | "rag";
+type DashboardTab = "dashboard" | "settings" | "webqr" | "chat" | "session" | "rag" | "mcp";
 
 interface IndustryConfig {
   icon: LucideIcon;
@@ -216,6 +224,65 @@ const INDUSTRY_CONFIGS: Record<BusinessCategory, IndustryConfig> = {
   }
 };
 
+export const INDUSTRY_CATALOG_CATEGORIES: Record<string, string[]> = {
+  gym: [
+    "Memberships",
+    "Personal Training",
+    "Supplements & Protein",
+    "Gym Gear & Essentials",
+    "Day Pass & Classes",
+    "Diet & Nutrition"
+  ],
+  medicine: [
+    "Prescription Medicines",
+    "OTC & Pain Relief",
+    "Vitamins & Supplements",
+    "First Aid & Surgical",
+    "Personal Care & Hygiene",
+    "Medical Equipment"
+  ],
+  grocery: [
+    "Fresh Produce & Vegetables",
+    "Dairy & Bakery",
+    "Packaged Foods & Snacks",
+    "Beverages & Drinks",
+    "Household Essentials",
+    "Grains & Pulses"
+  ],
+  electronics: [
+    "Smartphones & Tablets",
+    "Audio & Headphones",
+    "Laptops & Computers",
+    "Cables & Chargers",
+    "Smart Home Devices",
+    "Accessories"
+  ],
+  restaurant: [
+    "Starters & Appetizers",
+    "Main Course",
+    "Beverages & Shakes",
+    "Desserts",
+    "Combos & Platters",
+    "Chef's Specials"
+  ],
+  salon: [
+    "Hair Styling & Cuts",
+    "Facial & Skincare",
+    "Manicure & Pedicure",
+    "Spa & Massage",
+    "Hair Treatments",
+    "Beauty Products"
+  ],
+  custom: [
+    "Products",
+    "Services",
+    "Subscriptions",
+    "Consultations",
+    "Packages",
+    "Accessories"
+  ]
+};
+
 export default function BusinessWorkspace({
   account,
   onUpdateAccount,
@@ -224,29 +291,38 @@ export default function BusinessWorkspace({
   onOpenLogin,
   onLogout,
 }: WorkspaceProps) {
-  const VALID_DASHBOARD_TABS: DashboardTab[] = ["dashboard", "settings", "webqr", "chat", "session", "rag"];
+  const VALID_DASHBOARD_TABS: DashboardTab[] = ["dashboard", "settings", "chat", "session", "rag", "mcp"];
+
+  const normalizeDashboardTab = (tabStr: string | null): DashboardTab => {
+    if (!tabStr) return "dashboard";
+    const cleaned = tabStr.replace("#", "").toLowerCase() as DashboardTab;
+    if (cleaned === "webqr") return "session";
+    if (VALID_DASHBOARD_TABS.includes(cleaned)) return cleaned;
+    return "dashboard";
+  };
 
   const [activeTab, setActiveTab] = useState<DashboardTab>(() => {
     if (typeof window === "undefined") return "dashboard";
-    const hash = window.location.hash.replace("#", "").toLowerCase() as DashboardTab;
-    if (VALID_DASHBOARD_TABS.includes(hash)) return hash;
-    const saved = (
+    const hash = window.location.hash;
+    if (hash) {
+      return normalizeDashboardTab(hash);
+    }
+    const saved =
       localStorage.getItem(`messageapi_active_tab_v3_${account.id}`) ||
-      localStorage.getItem("messageapi_active_tab_v3")
-    ) as DashboardTab;
-    if (saved && VALID_DASHBOARD_TABS.includes(saved)) return saved;
-    return "dashboard";
+      localStorage.getItem("messageapi_active_tab_v3");
+    return normalizeDashboardTab(saved);
   });
 
   const handleSelectTab = (tab: DashboardTab) => {
-    setActiveTab(tab);
+    const target = tab === "webqr" ? "session" : tab;
+    setActiveTab(target);
     if (typeof window !== "undefined") {
       try {
-        localStorage.setItem("messageapi_active_tab_v3", tab);
-        localStorage.setItem(`messageapi_active_tab_v3_${account.id}`, tab);
-        window.history.replaceState(null, "", `#${tab}`);
+        localStorage.setItem("messageapi_active_tab_v3", target);
+        localStorage.setItem(`messageapi_active_tab_v3_${account.id}`, target);
+        window.history.replaceState(null, "", `#${target}`);
       } catch (e) {
-        window.location.hash = tab;
+        window.location.hash = target;
       }
     }
   };
@@ -260,9 +336,9 @@ export default function BusinessWorkspace({
     } catch (e) {}
 
     const handleHash = () => {
-      const hash = window.location.hash.replace("#", "").toLowerCase() as DashboardTab;
-      if (VALID_DASHBOARD_TABS.includes(hash) && hash !== activeTab) {
-        setActiveTab(hash);
+      const norm = normalizeDashboardTab(window.location.hash);
+      if (norm !== activeTab) {
+        setActiveTab(norm);
       }
     };
     window.addEventListener("hashchange", handleHash);
@@ -289,10 +365,40 @@ export default function BusinessWorkspace({
     statusText: string;
     tag: string;
     messages: ChatMessage[];
+    pinnedMessageId?: string;
   }
 
-  const [contacts, setContacts] = useState<WorkspaceContact[]>([]);
-  const [activeContactId, setActiveContactId] = useState("");
+  const [contacts, setContacts] = useState<WorkspaceContact[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = localStorage.getItem(`messageapi_contacts_${account.id}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [activeContactId, setActiveContactId] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return (
+        localStorage.getItem(`messageapi_active_contact_${account.id}`) ||
+        localStorage.getItem("messageapi_active_contact_global") ||
+        ""
+      );
+    } catch {
+      return "";
+    }
+  });
+
+  // Always keep activeContactId persistently synced to localStorage
+  useEffect(() => {
+    if (activeContactId && typeof window !== "undefined") {
+      try {
+        localStorage.setItem(`messageapi_active_contact_${account.id}`, activeContactId);
+        localStorage.setItem("messageapi_active_contact_global", activeContactId);
+      } catch (e) {}
+    }
+  }, [activeContactId, account.id]);
   const [contactSearch, setContactSearch] = useState("");
   const [contactFilter, setContactFilter] = useState<"all" | "unread" | "leads">("all");
   const [inputPrompt, setInputPrompt] = useState("");
@@ -302,6 +408,73 @@ export default function BusinessWorkspace({
   const [emojiModalOpen, setEmojiModalOpen] = useState(false);
   const [selectedEmojiCategory, setSelectedEmojiCategory] = useState<string>("all");
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const activeAudioElementRef = useRef<HTMLAudioElement | null>(null);
+
+  const fallbackSpeech = (textFallback?: string, messageId?: string) => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window && textFallback) {
+      window.speechSynthesis.cancel();
+      const clean = textFallback
+        .replace(/🎙️\s*\[.*?\]\s*/, "")
+        .replace(/^\[User sent a voice message\.\s*Transcript:\s*"(.*?)"\]$/s, "$1")
+        .replace(/[*_#~]/g, "")
+        .trim();
+      const utterance = new SpeechSynthesisUtterance(clean);
+      utterance.onend = () => setPlayingAudioId(null);
+      utterance.onerror = () => setPlayingAudioId(null);
+      window.speechSynthesis.speak(utterance);
+    } else {
+      setTimeout(() => setPlayingAudioId(null), 4000);
+    }
+  };
+
+  const handlePlayAudio = (messageId: string, mediaUrl?: string, textFallback?: string) => {
+    if (playingAudioId === messageId) {
+      if (activeAudioElementRef.current) {
+        activeAudioElementRef.current.pause();
+        activeAudioElementRef.current = null;
+      }
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+      setPlayingAudioId(null);
+    } else {
+      if (activeAudioElementRef.current) {
+        activeAudioElementRef.current.pause();
+        activeAudioElementRef.current = null;
+      }
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+
+      setPlayingAudioId(messageId);
+
+      const resolvedUrl = mediaUrl
+        ? (mediaUrl.startsWith("http") ? mediaUrl : `${BACKEND_URL}${mediaUrl}`)
+        : null;
+
+      if (resolvedUrl) {
+        try {
+          const audio = new Audio(resolvedUrl);
+          activeAudioElementRef.current = audio;
+          audio.onended = () => {
+            setPlayingAudioId(null);
+            activeAudioElementRef.current = null;
+          };
+          audio.onerror = () => {
+            fallbackSpeech(textFallback, messageId);
+          };
+          audio.play().catch(() => {
+            fallbackSpeech(textFallback, messageId);
+          });
+        } catch {
+          fallbackSpeech(textFallback, messageId);
+        }
+      } else {
+        fallbackSpeech(textFallback, messageId);
+      }
+    }
+  };
+
   const [isRecording, setIsRecording] = useState(false);
 
   // Chat Menu & Modals State
@@ -319,7 +492,16 @@ export default function BusinessWorkspace({
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [newContactName, setNewContactName] = useState("");
   const [newContactPhone, setNewContactPhone] = useState("");
-  const [newContactTag, setNewContactTag] = useState("Active Inquiry");
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+
+  // Contact Deletion Modal State
+  const [contactToDelete, setContactToDelete] = useState<WorkspaceContact | null>(null);
+  const [isDeletingContact, setIsDeletingContact] = useState(false);
+
+  // Inner Message Multi-Select, Bulk Delete & Pin State
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+  const [showDeleteMessagesModal, setShowDeleteMessagesModal] = useState(false);
+  const [isDeletingMessages, setIsDeletingMessages] = useState(false);
 
   const chatMessagesContainerRef = useRef<HTMLDivElement>(null);
   const chatMessagesEndRef = useRef<HTMLDivElement>(null);
@@ -383,8 +565,11 @@ export default function BusinessWorkspace({
       ]
     };
 
-    setContacts((prev) => [newContact, ...prev]);
+    setContacts((prev) => [newContact, ...prev.filter((p) => p.phone !== newContactPhone.trim())]);
     setActiveContactId(newId);
+    try {
+      localStorage.setItem(`messageapi_active_contact_${account.id}`, newId);
+    } catch (e) {}
     setNewContactName("");
     setNewContactPhone("");
     setShowAddChatModal(false);
@@ -398,12 +583,20 @@ export default function BusinessWorkspace({
     setChatMenuOpen(false);
   };
 
-  // Catalog State
+  // Catalog State & Category Options
+  const categoryPresets = INDUSTRY_CATALOG_CATEGORIES[account.category] || INDUSTRY_CATALOG_CATEGORIES.custom;
   const [newProdName, setNewProdName] = useState("");
   const [newProdPrice, setNewProdPrice] = useState("");
   const [newProdStock, setNewProdStock] = useState("");
-  const [newProdCategory, setNewProdCategory] = useState("General");
+  const [newProdCategory, setNewProdCategory] = useState<string>(categoryPresets[0] || "General");
+  const [isCustomCategory, setIsCustomCategory] = useState(false);
+  const [customCategoryInput, setCustomCategoryInput] = useState("");
   const [newProdUnit, setNewProdUnit] = useState("pcs");
+
+  // PDF Catalog File Upload State
+  const catalogPdfInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingCatalogPdf, setIsUploadingCatalogPdf] = useState(false);
+  const [catalogPdfMessage, setCatalogPdfMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   // Anti-ban State
   const [minDelay, setMinDelay] = useState(account.antiBanDelay.min || 8);
@@ -431,6 +624,27 @@ export default function BusinessWorkspace({
       setBackendStatus(res.online ? "connected" : "offline");
     });
   }, []);
+
+  // Sync Live Database Catalog on Mount
+  useEffect(() => {
+    MessageApiClient.getCatalog(account.apiKey).then((res) => {
+      if (res?.items && Array.isArray(res.items) && res.items.length > 0) {
+        const mapped: CatalogItem[] = res.items.map((i: any) => ({
+          id: i.id || createWsMessageId("prod"),
+          sku: i.sku || `SKU-${Math.floor(100 + Math.random() * 900)}`,
+          name: i.name,
+          category: i.category || "General",
+          price: Number(i.price) || 0,
+          stock: typeof i.stock === "number" ? i.stock : 10,
+          unit: i.unit || "pcs",
+          description: i.description || "",
+          isAvailable: i.isAvailable !== false
+        }));
+        const updated = updateBusinessAccount(account.id, { catalog: mapped });
+        if (updated) onUpdateAccount(updated);
+      }
+    }).catch(() => null);
+  }, [account.apiKey]);
 
   // Password Security & Update State
   const [currentPasswordInput, setCurrentPasswordInput] = useState("");
@@ -623,41 +837,222 @@ export default function BusinessWorkspace({
     }
   };
 
+  // Helper to load complete message history for a contact from database
+  const loadMessages = async (contactId: string) => {
+    if (!contactId) return;
+    setIsLoadingMessages(true);
+    try {
+      // Find the contact object from state to get potential aliases (id, phone, name)
+      const contactObj = contacts.find(
+        (c) =>
+          c.id === contactId ||
+          c.name === contactId ||
+          (c.phone && (c.phone === contactId || c.phone.replace(/[^0-9]/g, "") === contactId.replace(/[^0-9]/g, "")))
+      );
+
+      let res = await MessageApiClient.getMessages(contactId, account.apiKey);
+      if ((!res?.messages || res.messages.length === 0) && contactObj?.phone && contactObj.phone !== contactId) {
+        const phoneRes = await MessageApiClient.getMessages(contactObj.phone, account.apiKey).catch(() => null);
+        if (phoneRes?.messages && phoneRes.messages.length > 0) {
+          res = phoneRes;
+        }
+      }
+      if ((!res?.messages || res.messages.length === 0) && contactObj?.name && contactObj.name !== contactId) {
+        const nameRes = await MessageApiClient.getMessages(contactObj.name, account.apiKey).catch(() => null);
+        if (nameRes?.messages && nameRes.messages.length > 0) {
+          res = nameRes;
+        }
+      }
+
+      if (res?.messages && Array.isArray(res.messages)) {
+        const mappedMsgs: ChatMessage[] = res.messages.map((m: any) => {
+          const isAudioFile = m.mediaUrl && /\.(mp3|ogg|wav|m4a)($|\?)/i.test(m.mediaUrl);
+          const isPdfFile = m.mediaUrl && /\.pdf($|\?)/i.test(m.mediaUrl);
+          const detectedType = m.messageType
+            ? (m.messageType.toLowerCase() as any)
+            : (isAudioFile ? "audio" : isPdfFile ? "document" : m.mediaUrl ? "image" : "text");
+
+          return {
+            id: m.id,
+            sender: m.sender === "business" ? "business" : "customer",
+            text: (m.text || "").replace(/\*\*(.*?)\*\*/g, "*$1*"),
+            messageType: detectedType,
+            mediaUrl: m.mediaUrl || undefined,
+            timestamp: m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
+            isAiGenerated: m.sender === "business" && (m.isAiGenerated ?? true),
+            status: "read",
+            isPinned: Boolean(m.isPinned)
+          };
+        });
+
+        // Determine if any message is pinned in DB
+        const pinnedMsgFromDb = mappedMsgs.find((m) => m.isPinned);
+        const resolvedPinnedId = pinnedMsgFromDb ? pinnedMsgFromDb.id : undefined;
+
+        setContacts((prev) =>
+          prev.map((c) => {
+            const isTarget =
+              c.id === contactId ||
+              c.name === contactId ||
+              (contactObj && (c.id === contactObj.id || (c.phone && contactObj.phone && c.phone === contactObj.phone))) ||
+              (c.phone && (c.phone === contactId || c.phone.replace(/[^0-9]/g, "") === contactId.replace(/[^0-9]/g, "")));
+
+            if (!isTarget) return c;
+
+            // 1. If backend returned messages, use them and attach pinned ID
+            if (mappedMsgs.length > 0) {
+              return {
+                ...c,
+                messages: mappedMsgs,
+                pinnedMessageId: resolvedPinnedId
+              };
+            }
+
+            // 2. If backend returned 0 messages, keep existing messages from memory/localStorage
+            if (c.messages && c.messages.length > 0) {
+              return c;
+            }
+
+            // 3. Fallback: If contact has a lastMessage preview in sidebar, reconstruct it into messages array
+            if (c.lastMessage && c.lastMessage !== "Chat opened") {
+              const isBiz =
+                c.lastMessage.startsWith("💪") ||
+                c.lastMessage.startsWith("Here is your image") ||
+                c.lastMessage.toLowerCase().includes("welcome to");
+              const fallbackMsg: ChatMessage = {
+                id: `cached_${c.id}_last`,
+                sender: isBiz ? "business" : "customer",
+                text: c.lastMessage,
+                timestamp: c.lastTime || "Earlier",
+                status: "read",
+                isAiGenerated: isBiz,
+                isPinned: Boolean(c.pinnedMessageId && c.pinnedMessageId === `cached_${c.id}_last`)
+              };
+              return { ...c, messages: [fallbackMsg] };
+            }
+
+            return { ...c, messages: [] };
+          })
+        );
+      }
+    } catch (err) {
+      console.warn("Notice loading messages:", err);
+    } finally {
+      setIsLoadingMessages(false);
+    }
+  };
+
+  // Save contacts to localStorage whenever updated
+  useEffect(() => {
+    if (contacts.length > 0 && typeof window !== "undefined") {
+      try {
+        localStorage.setItem(`messageapi_contacts_${account.id}`, JSON.stringify(contacts));
+      } catch (e) {}
+    }
+  }, [contacts, account.id]);
+
+  // Load message history whenever active contact changes
+  useEffect(() => {
+    if (activeContactId) {
+      loadMessages(activeContactId);
+    }
+  }, [activeContactId]);
+
   // Fetch contacts whenever activeSessionId or apiKey changes
   useEffect(() => {
-    if (!activeSessionId) {
-      setContacts([]);
-      setActiveContactId("");
-      return;
-    }
-
-    MessageApiClient.getContacts(account.apiKey, activeSessionId)
+    MessageApiClient.getContacts(account.apiKey, activeSessionId || undefined)
       .then((res) => {
         if (res?.contacts && res.contacts.length > 0) {
-          const mapped = res.contacts.map((c: any) => ({
-            id: c.id,
-            name: c.name || `Customer ${c.phone?.slice(-4) || ""}`,
-            phone: c.phone || "",
-            avatarBg: "bg-emerald-600",
-            initials: (c.name || "WA").slice(0, 2).toUpperCase(),
-            lastMessage: c.messages?.[0]?.text || "Chat opened",
-            lastTime: c.messages?.[0]?.timestamp ? new Date(c.messages[0].timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now",
-            unreadCount: 0,
-            isOnline: true,
-            statusText: "online",
-            tag: c.tag || activeSessionId,
-            messages: []
-          }));
-          setContacts(mapped);
-          setActiveContactId((prev) => (prev && mapped.some((m: any) => m.id === prev) ? prev : mapped[0]?.id || ""));
-        } else {
-          setContacts([]);
-          setActiveContactId("");
+          const mapped = res.contacts.map((c: any) => {
+            const initialLastMsg: ChatMessage[] = c.messages?.[0] ? [{
+              id: c.messages[0].id,
+              sender: c.messages[0].sender === "business" ? "business" : "customer",
+              text: (c.messages[0].text || "").replace(/\*\*(.*?)\*\*/g, "*$1*"),
+              messageType: (c.messages[0].messageType?.toLowerCase() as any) || "text",
+              mediaUrl: c.messages[0].mediaUrl || undefined,
+              timestamp: c.messages[0].timestamp ? new Date(c.messages[0].timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Earlier",
+              isAiGenerated: c.messages[0].sender === "business" && (c.messages[0].isAiGenerated ?? true),
+              status: "read"
+            }] : [];
+
+            return {
+              id: c.id,
+              name: c.name || `Customer ${c.phone?.slice(-4) || ""}`,
+              phone: c.phone || "",
+              avatarBg: "bg-emerald-600",
+              initials: (c.name || "WA").slice(0, 2).toUpperCase(),
+              lastMessage: c.messages?.[0]?.text || "Chat opened",
+              lastTime: c.messages?.[0]?.timestamp ? new Date(c.messages[0].timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now",
+              unreadCount: 0,
+              isOnline: true,
+              statusText: "online",
+              tag: c.tag || activeSessionId || "WhatsApp",
+              messages: initialLastMsg,
+              pinnedMessageId: c.pinnedMessageId || undefined
+            };
+          });
+
+          // Preserve any already loaded messages in state so page refresh doesn't wipe them
+          setContacts((prev) => {
+            const merged = mapped.map((c: any) => {
+              const existing = prev.find(
+                (p) =>
+                  p.id === c.id ||
+                  (p.phone && c.phone && p.phone === c.phone) ||
+                  (p.name && c.name && p.name === c.name)
+              );
+              return {
+                ...c,
+                pinnedMessageId: c.pinnedMessageId || (existing?.messages?.find((m: any) => m.isPinned)?.id) || undefined,
+                messages:
+                  existing && existing.messages && existing.messages.length > 0
+                    ? existing.messages
+                    : (c.messages && c.messages.length > 0 ? c.messages : [])
+              };
+            });
+            // Also retain any local contacts that haven't synced to server yet
+            const missingLocal = prev.filter(
+              (p) =>
+                !mapped.some(
+                  (m: any) =>
+                    m.id === p.id ||
+                    (m.phone && p.phone && m.phone === p.phone) ||
+                    (m.name && p.name && m.name === p.name)
+                )
+            );
+            return [...merged, ...missingLocal];
+          });
+
+          const savedContactId =
+            (typeof window !== "undefined" &&
+              (localStorage.getItem(`messageapi_active_contact_${account.id}`) ||
+               localStorage.getItem("messageapi_active_contact_global"))) ||
+            activeContactId;
+
+          const matchedContact =
+            (savedContactId &&
+              (res.contacts.find((m: any) =>
+                m.id === savedContactId ||
+                (m.phone && savedContactId.replace(/[^0-9]/g, "") === m.phone.replace(/[^0-9]/g, "")) ||
+                (m.phone && savedContactId.includes(m.phone.replace(/[^0-9]/g, "")))
+              ) ||
+              contacts.find((c) =>
+                c.id === savedContactId ||
+                (c.phone && savedContactId.replace(/[^0-9]/g, "") === c.phone.replace(/[^0-9]/g, ""))
+              ))) ||
+            null;
+
+          const targetId = matchedContact?.id || savedContactId || res.contacts[0]?.id || "";
+          if (targetId && targetId !== activeContactId) {
+            setActiveContactId(targetId);
+          }
+          if (targetId) {
+            loadMessages(targetId);
+          }
         }
       })
-      .catch(() => {
-        setContacts([]);
-        setActiveContactId("");
+      .catch((err) => {
+        console.warn("Notice loading contacts from backend:", err);
       });
   }, [activeSessionId, account.apiKey]);
 
@@ -674,17 +1069,21 @@ export default function BusinessWorkspace({
           const { contactId, contact, message, sessionId } = payload;
           if (!message) return;
 
-          // If payload is tagged with a session and user has activeSessionId, ensure matching
-          if (sessionId && activeSessionId && sessionId !== activeSessionId) {
-            return;
-          }
-
           setContacts((prev) => {
             const existingIdx = prev.findIndex((c) => c.id === contactId || (c.phone && contact?.phone && c.phone === contact.phone));
+            const sanitizedMsgText = (message.text || "").replace(/\*\*(.*?)\*\*/g, "*$1*");
+            const isAudioMsg = message.mediaUrl && /\.(mp3|ogg|wav|m4a)($|\?)/i.test(message.mediaUrl);
+            const isPdfMsg = message.mediaUrl && /\.pdf($|\?)/i.test(message.mediaUrl);
+            const resolvedMsgType = message.messageType
+              ? (message.messageType.toLowerCase() as any)
+              : (isAudioMsg ? "audio" : isPdfMsg ? "document" : message.mediaUrl ? "image" : "text");
+
             const newMsg: ChatMessage = {
               id: message.id || createWsMessageId("msg"),
               sender: message.sender === "business" ? "business" : "customer",
-              text: message.text,
+              text: sanitizedMsgText,
+              messageType: resolvedMsgType,
+              mediaUrl: message.mediaUrl || undefined,
               timestamp: message.timestamp || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               isAiGenerated: message.sender === "business" || message.isAiGenerated,
               status: "read"
@@ -709,7 +1108,7 @@ export default function BusinessWorkspace({
                 // Update latest message preview without appending duplicate bubble
                 updated[existingIdx] = {
                   ...target,
-                  lastMessage: message.text,
+                  lastMessage: sanitizedMsgText,
                   lastTime: newMsg.timestamp,
                 };
                 return updated;
@@ -717,7 +1116,7 @@ export default function BusinessWorkspace({
 
               updated[existingIdx] = {
                 ...target,
-                lastMessage: message.text,
+                lastMessage: sanitizedMsgText,
                 lastTime: newMsg.timestamp,
                 messages: [...existingMessages, newMsg]
               };
@@ -729,7 +1128,7 @@ export default function BusinessWorkspace({
                 phone: contact.phone || "",
                 avatarBg: "bg-emerald-600",
                 initials: (contact.name || "WA").slice(0, 2).toUpperCase(),
-                lastMessage: message.text,
+                lastMessage: sanitizedMsgText,
                 lastTime: newMsg.timestamp,
                 unreadCount: 0,
                 isOnline: true,
@@ -747,7 +1146,53 @@ export default function BusinessWorkspace({
         } catch (e) {}
       };
 
+      const handlePinMessage = (event: MessageEvent) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const { contactId, messageId, isPinned } = payload;
+          setContacts((prev) =>
+            prev.map((c) => {
+              const matches =
+                c.id === contactId ||
+                (c.phone && contactId && c.phone.replace(/[^0-9]/g, "") === contactId.replace(/[^0-9]/g, ""));
+              if (!matches) return c;
+              return {
+                ...c,
+                pinnedMessageId: isPinned ? messageId : undefined,
+                messages: (c.messages || []).map((m) => ({
+                  ...m,
+                  isPinned: isPinned && m.id === messageId
+                }))
+              };
+            })
+          );
+        } catch (e) {}
+      };
+
+      const handleSessionStatus = (event: MessageEvent) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const { sessionId, status, phoneNumber } = payload;
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === sessionId
+                ? {
+                    ...s,
+                    status: status as any,
+                    phoneNumber: status === "DISCONNECTED" ? "Not Linked" : (phoneNumber || s.phoneNumber),
+                    lastConnected: status === "CONNECTED"
+                      ? new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                      : s.lastConnected
+                  }
+                : s
+            )
+          );
+        } catch (e) {}
+      };
+
       eventSource.addEventListener("message:new", handleIncomingMessage);
+      eventSource.addEventListener("message:pin", handlePinMessage);
+      eventSource.addEventListener("session:status", handleSessionStatus);
     } catch (e) {}
 
     return () => {
@@ -757,28 +1202,9 @@ export default function BusinessWorkspace({
 
   // Load chat messages when active contact changes
   useEffect(() => {
-    if (!activeContactId) return;
-    MessageApiClient.getMessages(activeContactId, account.apiKey)
-      .then((res) => {
-        if (res?.messages && res.messages.length > 0) {
-          const mappedMsgs: ChatMessage[] = res.messages.map((m: any) => ({
-            id: m.id,
-            sender: m.sender === "business" ? "business" : "customer",
-            text: m.text,
-            timestamp: m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
-            isAiGenerated: m.sender === "business",
-            status: "read"
-          }));
-          setContacts((prev) =>
-            prev.map((c) =>
-              c.id === activeContactId
-                ? { ...c, messages: mappedMsgs }
-                : c
-            )
-          );
-        }
-      })
-      .catch(() => null);
+    if (activeContactId) {
+      loadMessages(activeContactId);
+    }
   }, [activeContactId, account.apiKey]);
 
   // Multi-Session WhatsApp Management State
@@ -815,16 +1241,11 @@ export default function BusinessWorkspace({
         const connected = mapped.filter((s: any) => s.status === "CONNECTED");
         if (connected.length > 0) {
           setActiveSessionId((prev) => (prev && connected.some((m: any) => m.id === prev) ? prev : connected[0].id));
-        } else {
-          setActiveSessionId("");
-          setContacts([]);
-          setActiveContactId("");
+        } else if (mapped.length > 0) {
+          setActiveSessionId((prev) => (prev && mapped.some((m: any) => m.id === prev) ? prev : mapped[0].id));
         }
       } else {
         setSessions([]);
-        setActiveSessionId("");
-        setContacts([]);
-        setActiveContactId("");
       }
     } catch (e) {
       console.warn("Notice fetching sessions:", e);
@@ -833,6 +1254,8 @@ export default function BusinessWorkspace({
 
   useEffect(() => {
     fetchSessions();
+    const interval = setInterval(fetchSessions, 4000);
+    return () => clearInterval(interval);
   }, [account.apiKey]);
 
   const [viewingSessionQr, setViewingSessionQr] = useState<{
@@ -854,43 +1277,7 @@ export default function BusinessWorkspace({
   );
   const [modalQrDataUrl, setModalQrDataUrl] = useState<string | null>(null);
 
-  // Listen to live QR Stream from Baileys backend for WebQR tab
-  React.useEffect(() => {
-    if (activeTab !== "webqr") return;
 
-    const primarySessionId = sessions.find((s) => s.isPrimary)?.id || sessions[0]?.id || "wa_primary_01";
-    let eventSource: EventSource | null = null;
-
-    try {
-      const streamUrl = MessageApiClient.getQrStreamUrl(primarySessionId);
-      eventSource = new EventSource(streamUrl);
-
-      eventSource.addEventListener("qr", (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.qr) setWebQrDataUrl(data.qr);
-        } catch (e) {}
-      });
-
-      eventSource.addEventListener("ready", (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data);
-          setSessions((prev) =>
-            prev.map((s) =>
-              s.id === primarySessionId
-                ? { ...s, status: "CONNECTED", phoneNumber: data.phoneNumber || s.phoneNumber }
-                : s
-            )
-          );
-          setActiveSessionId((prev) => prev || primarySessionId);
-        } catch (e) {}
-      });
-    } catch (e) {}
-
-    return () => {
-      eventSource?.close();
-    };
-  }, [activeTab, sessions]);
 
   // Listen to live QR Stream when viewing a session in modal
   React.useEffect(() => {
@@ -902,6 +1289,29 @@ export default function BusinessWorkspace({
     setModalQrDataUrl(generateQrSvgDataUrl(`2@${viewingSessionQr.id},${Date.now()},msgapi_pair`));
 
     let eventSource: EventSource | null = null;
+    let pollInterval: NodeJS.Timeout | null = null;
+    let autoCloseTimer: NodeJS.Timeout | null = null;
+
+    const onSessionConnected = (detectedPhone?: string) => {
+      const realPhone = detectedPhone ? (detectedPhone.startsWith("+") ? detectedPhone : `+${detectedPhone}`) : viewingSessionQr.phoneNumber;
+      setViewingSessionQr((prev) =>
+        prev ? { ...prev, status: "CONNECTED", phoneNumber: realPhone } : null
+      );
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === viewingSessionQr.id
+            ? { ...s, status: "CONNECTED", phoneNumber: realPhone, lastConnected: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) }
+            : s
+        )
+      );
+      setActiveSessionId((prev) => prev || viewingSessionQr.id);
+
+      // Auto close after 1.8 seconds upon real device connection
+      autoCloseTimer = setTimeout(() => {
+        setViewingSessionQr(null);
+      }, 1800);
+    };
+
     try {
       const streamUrl = MessageApiClient.getQrStreamUrl(viewingSessionQr.id);
       eventSource = new EventSource(streamUrl);
@@ -916,25 +1326,33 @@ export default function BusinessWorkspace({
       eventSource.addEventListener("ready", (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data);
-          setViewingSessionQr((prev) =>
-            prev ? { ...prev, status: "CONNECTED", phoneNumber: data.phoneNumber || prev.phoneNumber } : null
-          );
-          setSessions((prev) =>
-            prev.map((s) =>
-              s.id === viewingSessionQr.id
-                ? { ...s, status: "CONNECTED", phoneNumber: data.phoneNumber || s.phoneNumber }
-                : s
-            )
-          );
-          setActiveSessionId((prev) => prev || viewingSessionQr.id);
-        } catch (e) {}
+          onSessionConnected(data.phoneNumber);
+        } catch (e) {
+          onSessionConnected();
+        }
       });
     } catch (e) {}
 
+    // Fallback status check while modal is open
+    if (viewingSessionQr.status !== "CONNECTED") {
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await MessageApiClient.getSessionStatus(viewingSessionQr.id, account.apiKey);
+          if (res?.session?.status === "CONNECTED") {
+            onSessionConnected(res.session.phoneNumber);
+          } else if (res?.session?.qrCode && !modalQrDataUrl) {
+            setModalQrDataUrl(res.session.qrCode);
+          }
+        } catch (e) {}
+      }, 2500);
+    }
+
     return () => {
       eventSource?.close();
+      if (pollInterval) clearInterval(pollInterval);
+      if (autoCloseTimer) clearTimeout(autoCloseTimer);
     };
-  }, [viewingSessionQr?.id]);
+  }, [viewingSessionQr?.id, account.apiKey]);
 
   // Open Delete Confirmation Modal
   const handleRequestDeleteSession = (sess: { id: string; name: string; phoneNumber?: string }) => {
@@ -972,20 +1390,15 @@ export default function BusinessWorkspace({
   const handleConfirmDeleteSession = async (sessionId: string) => {
     setIsDeletingSession(true);
     try {
-      await MessageApiClient.deleteSession(sessionId, account.apiKey, true);
+      await MessageApiClient.deleteSession(sessionId, account.apiKey, false);
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       if (viewingSessionQr?.id === sessionId) {
         setViewingSessionQr(null);
       }
-      // Wipe contacts for this session from state
-      setContacts((prev) => prev.filter((c) => c.tag !== sessionId && !c.tag?.includes(sessionId)));
+      // Note: Preserve contacts and customer chat history so conversation records remain intact
       if (activeSessionId === sessionId) {
         const remainingConnected = sessions.filter((s) => s.id !== sessionId && s.status === "CONNECTED");
         setActiveSessionId(remainingConnected[0]?.id || "");
-        if (remainingConnected.length === 0) {
-          setContacts([]);
-          setActiveContactId("");
-        }
       }
     } catch (e) {
       console.warn("Notice deleting session:", e);
@@ -1004,93 +1417,441 @@ export default function BusinessWorkspace({
     }
   };
 
-  // Add New Session
-  const handleAddNewSession = () => {
-    const newId = `wa_session_${Math.floor(10 + Math.random() * 90)}`;
-    const newSession = {
-      id: newId,
-      name: `WhatsApp Instance ${sessions.length + 1}`,
-      status: "CONNECTING" as const,
-      phoneNumber: "+91 9XXXXXXXXX",
-      autoReconnect: "Enabled (Safe Pacing)",
-      lastConnected: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-      deviceModel: "Multi-Device Gateway",
-      batteryPercent: 100,
-      latencyMs: 35,
-      isPrimary: false
-    };
-    setSessions((prev) => [...prev, newSession]);
-    setViewingSessionQr(newSession);
+  // Connect New Session & WebQR Modal State (2-step: 1. Name input, 2. Live QR pairing with auto-detection & auto-close)
+  const [showConnectNewSessionModal, setShowConnectNewSessionModal] = useState(false);
+  const [newSessionStep, setNewSessionStep] = useState<"name" | "qr" | "connected">("name");
+  const [newSessionNameInput, setNewSessionNameInput] = useState("");
+  const [newSessionIsPrimary, setNewSessionIsPrimary] = useState(true);
+  const [isCreatingNewSession, setIsCreatingNewSession] = useState(false);
+  const [connectSessionError, setConnectSessionError] = useState<string | null>(null);
+  const [createdSessionData, setCreatedSessionData] = useState<{
+    id: string;
+    name: string;
+    status: "CONNECTING" | "CONNECTED";
+    phoneNumber?: string;
+  } | null>(null);
+  const [newSessionQrDataUrl, setNewSessionQrDataUrl] = useState<string | null>(null);
+  const [newSessionConnectedPhone, setNewSessionConnectedPhone] = useState<string | null>(null);
+  const [isRefreshingNewSessionQr, setIsRefreshingNewSessionQr] = useState(false);
 
-    // Call backend to initialize Baileys session
-    MessageApiClient.createSession(newId, newSession.name, account.apiKey)
-      .then((res) => {
-        if (res?.qrCode) setModalQrDataUrl(res.qrCode);
-      })
-      .catch(() => null);
+  // Open the Connect New Session Modal (Step 1: name only, NO QR visible initially)
+  const handleOpenConnectModal = () => {
+    setNewSessionStep("name");
+    setNewSessionNameInput("");
+    setNewSessionIsPrimary(sessions.length === 0 || !sessions.some((s) => s.isPrimary));
+    setConnectSessionError(null);
+    setCreatedSessionData(null);
+    setNewSessionQrDataUrl(null);
+    setNewSessionConnectedPhone(null);
+    setShowConnectNewSessionModal(true);
   };
 
-  // WebQR Custom Session Name & Creation State
-  const [qrSessionNameInput, setQrSessionNameInput] = useState("");
-  const [sessionCreatedMessage, setSessionCreatedMessage] = useState<string | null>(null);
+  // Submit session name -> Initialize Baileys session and show live scannable QR
+  const handleCreateSessionSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = newSessionNameInput.trim();
+    if (!trimmed) {
+      setConnectSessionError("Please provide a name for this session");
+      return;
+    }
+    setIsCreatingNewSession(true);
+    setConnectSessionError(null);
 
-  const handleCreateSessionFromWebQr = () => {
-    const trimmed = qrSessionNameInput.trim();
-    if (!trimmed) return;
     const cleanId = trimmed.toLowerCase().replace(/[^a-z0-9]/g, "_").slice(0, 16);
-    const newId = `wa_${cleanId || "inst"}_${Math.floor(10 + Math.random() * 90)}`;
-    const newSession = {
-      id: newId,
-      name: trimmed,
-      status: "CONNECTING" as const,
-      phoneNumber: "+91 93824 68250",
-      autoReconnect: "Enabled (Safe Pacing)",
-      lastConnected: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-      deviceModel: "WhatsApp Web Multi-Device",
-      batteryPercent: 95,
-      latencyMs: 34,
-      isPrimary: false
-    };
-    setSessions((prev) => [...prev, newSession]);
-    setQrSessionNameInput("");
-    setSessionCreatedMessage(`Session "${trimmed}" created! Scan QR code to link device.`);
-    setQrRefreshed(true);
+    const newId = `wa_${cleanId || "session"}_${Math.floor(100 + Math.random() * 900)}`;
 
-    // Immediately generate scannable QR
-    setWebQrDataUrl(generateQrSvgDataUrl(`2@${newId},${Date.now()},msgapi_gateway`));
+    try {
+      const res = await MessageApiClient.createSession(newId, trimmed, account.apiKey, newSessionIsPrimary);
+      const newSessObj = {
+        id: newId,
+        name: trimmed,
+        status: "CONNECTING" as const,
+        phoneNumber: "Waiting for scan...",
+        autoReconnect: "Enabled (Safe Pacing)",
+        lastConnected: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        deviceModel: "WhatsApp Multi-Device",
+        batteryPercent: 100,
+        latencyMs: 32,
+        isPrimary: newSessionIsPrimary
+      };
 
-    // Initialize on Baileys backend
-    MessageApiClient.createSession(newId, trimmed, account.apiKey)
-      .then((res) => {
-        if (res?.qrCode) setWebQrDataUrl(res.qrCode);
-      })
-      .catch(() => null);
+      setSessions((prev) => {
+        const list = newSessionIsPrimary ? prev.map((s) => ({ ...s, isPrimary: false })) : prev;
+        return [...list.filter((s) => s.id !== newId), newSessObj];
+      });
 
-    setTimeout(() => setQrRefreshed(false), 1200);
-    setTimeout(() => setSessionCreatedMessage(null), 3500);
+      setCreatedSessionData({
+        id: newId,
+        name: trimmed,
+        status: "CONNECTING"
+      });
+
+      if (res?.qrCode) {
+        setNewSessionQrDataUrl(res.qrCode);
+      } else {
+        setNewSessionQrDataUrl(generateQrSvgDataUrl(`2@${newId},${Date.now()},msgapi_device`));
+      }
+
+      setNewSessionStep("qr");
+    } catch (err: any) {
+      const newSessObj = {
+        id: newId,
+        name: trimmed,
+        status: "CONNECTING" as const,
+        phoneNumber: "Waiting for scan...",
+        autoReconnect: "Enabled (Safe Pacing)",
+        lastConnected: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        deviceModel: "WhatsApp Multi-Device",
+        batteryPercent: 100,
+        latencyMs: 32,
+        isPrimary: newSessionIsPrimary
+      };
+      setSessions((prev) => [...prev.filter((s) => s.id !== newId), newSessObj]);
+      setCreatedSessionData({
+        id: newId,
+        name: trimmed,
+        status: "CONNECTING"
+      });
+      setNewSessionQrDataUrl(generateQrSvgDataUrl(`2@${newId},${Date.now()},msgapi_device`));
+      setNewSessionStep("qr");
+    } finally {
+      setIsCreatingNewSession(false);
+    }
   };
 
-  const activeContact = contacts.find((c) => c.id === activeContactId) || contacts[0];
+  // Real-time Baileys SSE listener + status polling for newly created session pairing
+  useEffect(() => {
+    if (!showConnectNewSessionModal || newSessionStep !== "qr" || !createdSessionData?.id) {
+      return;
+    }
+
+    const sessionId = createdSessionData.id;
+    let eventSource: EventSource | null = null;
+    let pollInterval: NodeJS.Timeout | null = null;
+    let closeTimeout: NodeJS.Timeout | null = null;
+
+    const handleConnectedSuccess = (phone?: string) => {
+      const detectedPhone = phone ? (phone.startsWith("+") ? phone : `+${phone}`) : "+91 93824 68250";
+      setNewSessionConnectedPhone(detectedPhone);
+      setNewSessionStep("connected");
+
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId
+            ? {
+                ...s,
+                status: "CONNECTED",
+                phoneNumber: detectedPhone,
+                lastConnected: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+              }
+            : s
+        )
+      );
+
+      setActiveSessionId((prev) => prev || sessionId);
+
+      // Real-time detection: automatically closes modal after 1.8 seconds!
+      closeTimeout = setTimeout(() => {
+        setShowConnectNewSessionModal(false);
+        setNewSessionStep("name");
+        setCreatedSessionData(null);
+      }, 1800);
+    };
+
+    try {
+      const streamUrl = MessageApiClient.getQrStreamUrl(sessionId);
+      eventSource = new EventSource(streamUrl);
+
+      eventSource.addEventListener("qr", (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.qr) setNewSessionQrDataUrl(data.qr);
+        } catch (e) {}
+      });
+
+      eventSource.addEventListener("ready", (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleConnectedSuccess(data.phoneNumber);
+        } catch (e) {
+          handleConnectedSuccess();
+        }
+      });
+    } catch (e) {}
+
+    // Fallback polling every 2.5s
+    pollInterval = setInterval(async () => {
+      try {
+        const res = await MessageApiClient.getSessionStatus(sessionId, account.apiKey);
+        if (res?.session?.status === "CONNECTED") {
+          handleConnectedSuccess(res.session.phoneNumber);
+        } else if (res?.session?.qrCode && !newSessionQrDataUrl) {
+          setNewSessionQrDataUrl(res.session.qrCode);
+        }
+      } catch (e) {}
+    }, 2500);
+
+    return () => {
+      if (eventSource) eventSource.close();
+      if (pollInterval) clearInterval(pollInterval);
+      if (closeTimeout) clearTimeout(closeTimeout);
+    };
+  }, [showConnectNewSessionModal, newSessionStep, createdSessionData?.id, account.apiKey]);
+
+  const activeContact =
+    contacts.find((c) => c.id === activeContactId) ||
+    contacts.find((c) => {
+      const saved =
+        typeof window !== "undefined"
+          ? localStorage.getItem(`messageapi_active_contact_${account.id}`) ||
+            localStorage.getItem("messageapi_active_contact_global")
+          : null;
+      return (
+        saved &&
+        (c.id === saved ||
+          (c.phone && c.phone.replace(/[^0-9]/g, "") === saved.replace(/[^0-9]/g, "")) ||
+          (c.phone && saved.includes(c.phone.replace(/[^0-9]/g, ""))))
+      );
+    }) ||
+    contacts[0];
 
   // Handle Contact Select & Clear Unread
   const handleSelectContact = (id: string) => {
     setActiveContactId(id);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(`messageapi_active_contact_${account.id}`, id);
+        localStorage.setItem("messageapi_active_contact_global", id);
+      } catch (e) {}
+    }
+    setSelectedMessageIds([]); // Reset selection mode when switching contact
     setContacts((prev) =>
       prev.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c))
     );
+    loadMessages(id);
   };
 
-  // Handle Sending Chat in Live Chat Tab
-  const handleSendMessage = (textToSend?: string) => {
-    const text = (textToSend || inputPrompt).trim();
-    if (!text || isTyping) return;
+  // Keyboard shortcut: Escape exits selection mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && selectedMessageIds.length > 0) {
+        setSelectedMessageIds([]);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedMessageIds.length]);
 
-    const userMsg: ChatMessage = {
-      id: createWsMessageId("user"),
-      sender: "customer",
+  // 1. Delete Contact (Sidebar whole chat)
+  const handleConfirmDeleteContact = async () => {
+    if (!contactToDelete) return;
+    setIsDeletingContact(true);
+    try {
+      await MessageApiClient.deleteContact(contactToDelete.id, account.apiKey).catch(() => null);
+
+      const updatedList = contacts.filter((c) => c.id !== contactToDelete.id);
+      setContacts(updatedList);
+      try {
+        localStorage.setItem(`messageapi_contacts_${account.id}`, JSON.stringify(updatedList));
+      } catch (e) {}
+
+      if (activeContactId === contactToDelete.id) {
+        const nextId = updatedList.length > 0 ? updatedList[0].id : "";
+        setActiveContactId(nextId);
+        try {
+          localStorage.setItem(`messageapi_active_contact_${account.id}`, nextId);
+        } catch (e) {}
+      }
+
+      setContactToDelete(null);
+    } finally {
+      setIsDeletingContact(false);
+    }
+  };
+
+  // 2. Double Click to initiate Selection Mode (and select that message)
+  const handleMessageDoubleClick = (msgId: string) => {
+    if (selectedMessageIds.includes(msgId)) {
+      setSelectedMessageIds((prev) => prev.filter((id) => id !== msgId));
+    } else {
+      setSelectedMessageIds((prev) => [...prev, msgId]);
+    }
+  };
+
+  // 3. Single click when in selection mode (toggles selection)
+  const handleMessageClick = (msgId: string) => {
+    if (selectedMessageIds.length > 0) {
+      if (selectedMessageIds.includes(msgId)) {
+        setSelectedMessageIds((prev) => prev.filter((id) => id !== msgId));
+      } else {
+        setSelectedMessageIds((prev) => [...prev, msgId]);
+      }
+    }
+  };
+
+  // 4. Pin / Unpin Selected Message (Only 1 message can be pinned)
+  const handleTogglePinSelected = async () => {
+    if (selectedMessageIds.length !== 1 || !activeContact) return;
+    const targetId = selectedMessageIds[0];
+    const isAlreadyPinned =
+      activeContact.pinnedMessageId === targetId ||
+      activeContact.messages.some((m) => m.id === targetId && m.isPinned);
+
+    const nextIsPinned = !isAlreadyPinned;
+    const newPinnedId = nextIsPinned ? targetId : undefined;
+
+    // Optimistically update message objects (strictly only 1 message pinned)
+    const updatedMessages = activeContact.messages.map((m) => ({
+      ...m,
+      isPinned: nextIsPinned && m.id === targetId
+    }));
+
+    const updatedContact: WorkspaceContact = {
+      ...activeContact,
+      messages: updatedMessages,
+      pinnedMessageId: newPinnedId
+    };
+
+    const updatedList = contacts.map((c) => (c.id === activeContact.id ? updatedContact : c));
+    setContacts(updatedList);
+    try {
+      localStorage.setItem(`messageapi_contacts_${account.id}`, JSON.stringify(updatedList));
+    } catch (e) {}
+    setSelectedMessageIds([]);
+
+    // Persist to database so it stays pinned across reloads
+    try {
+      await MessageApiClient.togglePinMessage(
+        {
+          contactId: activeContact.id,
+          messageId: targetId,
+          isPinned: nextIsPinned
+        },
+        account.apiKey
+      );
+    } catch (err) {
+      console.warn("Notice updating pin status on database:", err);
+    }
+  };
+
+  // 5. Unpin directly from the Sticky banner
+  const handleUnpinDirectly = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!activeContact) return;
+    const currentPinnedId =
+      activeContact.pinnedMessageId ||
+      activeContact.messages.find((m) => m.isPinned)?.id;
+
+    const updatedMessages = activeContact.messages.map((m) => ({
+      ...m,
+      isPinned: false
+    }));
+
+    const updatedContact: WorkspaceContact = {
+      ...activeContact,
+      messages: updatedMessages,
+      pinnedMessageId: undefined
+    };
+    const updatedList = contacts.map((c) => (c.id === activeContact.id ? updatedContact : c));
+    setContacts(updatedList);
+    try {
+      localStorage.setItem(`messageapi_contacts_${account.id}`, JSON.stringify(updatedList));
+    } catch (e) {}
+
+    // Persist unpin to database
+    if (currentPinnedId) {
+      try {
+        await MessageApiClient.togglePinMessage(
+          {
+            contactId: activeContact.id,
+            messageId: currentPinnedId,
+            isPinned: false
+          },
+          account.apiKey
+        );
+      } catch (err) {
+        console.warn("Notice unpinning message on database:", err);
+      }
+    }
+  };
+
+  // 6. Smooth Scroll to Pinned Message with visual flash effect
+  const handleScrollToPinned = () => {
+    if (!activeContact?.pinnedMessageId) return;
+    const el = document.getElementById(`msg_${activeContact.pinnedMessageId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2", "ring-teal-500", "rounded-2xl");
+      setTimeout(() => {
+        el.classList.remove("ring-2", "ring-teal-500", "rounded-2xl");
+      }, 2000);
+    }
+  };
+
+  // 7. Bulk / Single Delete Messages Confirmation
+  const handleConfirmDeleteMessages = async () => {
+    if (!activeContact || selectedMessageIds.length === 0) return;
+    setIsDeletingMessages(true);
+    try {
+      await MessageApiClient.deleteMessages(selectedMessageIds, account.apiKey).catch(() => null);
+
+      const remainingMessages = activeContact.messages.filter((m) => !selectedMessageIds.includes(m.id));
+      const lastMsg = remainingMessages[remainingMessages.length - 1];
+
+      const isPinnedDeleted =
+        selectedMessageIds.includes(activeContact.pinnedMessageId || "") ||
+        activeContact.messages.some((m) => selectedMessageIds.includes(m.id) && m.isPinned);
+
+      const newPinnedId = isPinnedDeleted
+        ? undefined
+        : activeContact.pinnedMessageId;
+
+      if (isPinnedDeleted && (activeContact.pinnedMessageId || selectedMessageIds[0])) {
+        MessageApiClient.togglePinMessage(
+          {
+            contactId: activeContact.id,
+            messageId: activeContact.pinnedMessageId || selectedMessageIds[0],
+            isPinned: false
+          },
+          account.apiKey
+        ).catch(() => null);
+      }
+
+      const updatedContact: WorkspaceContact = {
+        ...activeContact,
+        messages: remainingMessages,
+        lastMessage: lastMsg ? lastMsg.text : "No messages yet",
+        lastTime: lastMsg ? lastMsg.timestamp : activeContact.lastTime,
+        pinnedMessageId: newPinnedId
+      };
+
+      const updatedList = contacts.map((c) => (c.id === activeContact.id ? updatedContact : c));
+      setContacts(updatedList);
+      try {
+        localStorage.setItem(`messageapi_contacts_${account.id}`, JSON.stringify(updatedList));
+      } catch (e) {}
+
+      setSelectedMessageIds([]);
+      setShowDeleteMessagesModal(false);
+    } finally {
+      setIsDeletingMessages(false);
+    }
+  };
+
+  // Handle Sending Chat in Live Chat Tab (Store Agent direct chat to WhatsApp)
+  const handleSendMessage = (textToSend?: string) => {
+    const rawText = (textToSend || inputPrompt).trim();
+    if (!rawText) return;
+    const text = rawText.replace(/\*\*(.*?)\*\*/g, "*$1*");
+
+    // 1. OUTGOING MESSAGE: STORE AGENT SENDS DIRECTLY TO CUSTOMER ON WHATSAPP
+    const businessMsg: ChatMessage = {
+      id: createWsMessageId("biz"),
+      sender: "business",
       text,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      status: "delivered"
+      isAiGenerated: false,
+      status: "sent"
     };
 
     setContacts((prev) =>
@@ -1099,8 +1860,8 @@ export default function BusinessWorkspace({
           ? {
               ...c,
               lastMessage: text,
-              lastTime: userMsg.timestamp,
-              messages: [...c.messages, userMsg]
+              lastTime: businessMsg.timestamp,
+              messages: [...c.messages, businessMsg]
             }
           : c
       )
@@ -1109,55 +1870,35 @@ export default function BusinessWorkspace({
     setInputPrompt("");
     setAttachmentMenuOpen(false);
 
-    if (aiAutoPilot) {
-      setIsTyping(true);
+    // Dispatch to real WhatsApp number via Baileys backend socket
+    const targetPhone = activeContact?.phone;
+    const activeSession =
+      sessions.find((s) => s.id === activeSessionId && s.status === "CONNECTED") ||
+      sessions.find((s) => s.status === "CONNECTED") ||
+      sessions[0];
+    const targetSessionId =
+      (activeContact?.tag && sessions.some((s) => s.id === activeContact.tag && s.status === "CONNECTED"))
+        ? activeContact.tag
+        : (activeSession?.id || activeSessionId || "wa_primary_01");
 
-      const handleReply = (reply: string) => {
-        setIsTyping(false);
-        const botMsg: ChatMessage = {
-          id: createWsMessageId("bot"),
-          sender: "business",
-          text: reply,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          isAiGenerated: true,
-          status: "read"
-        };
-        setContacts((prev) =>
-          prev.map((c) =>
-            c.id === activeContactId
-              ? {
-                  ...c,
-                  lastMessage: reply,
-                  lastTime: botMsg.timestamp,
-                  messages: [...c.messages, botMsg]
-                }
-              : c
-          )
-        );
-      };
-
-      // Query real RAG ERP engine on the backend
-      MessageApiClient.queryErp(text, account.apiKey)
-        .then((res) => {
-          if (res?.aiGeneratedReply) {
-            handleReply(res.aiGeneratedReply);
-          } else {
-            handleReply(generateSimulatedReply(account, text));
-          }
-        })
-        .catch(() => {
-          setTimeout(() => {
-            handleReply(generateSimulatedReply(account, text));
-          }, 800);
-        });
+    if (targetPhone && targetSessionId) {
+      MessageApiClient.sendMessage({
+        sessionId: targetSessionId,
+        to: targetPhone,
+        content: text,
+        apiKey: account.apiKey
+      }).catch((err) => console.warn("Notice sending to WhatsApp:", err));
     }
+
+    // Absolutely NO AI response generated when store agent sends a message!
+    // AI responses only trigger on real inbound WhatsApp messages from customers.
   };
 
-  // Voice Note Recording Simulation
+  // Voice Note Recording Simulation (Sends voice message as store agent)
   const handleToggleVoiceRecording = () => {
     if (isRecording) {
       setIsRecording(false);
-      handleSendMessage(`🎙️ [Voice Note: 0:06s] 'Hello, please confirm order details and price for ${account.catalog[0]?.name || "this item"}.'`);
+      handleSendMessage(`🎙️ [Voice Note: 0:05s]: Audio voice message from ${account.businessName}`);
     } else {
       setIsRecording(true);
     }
@@ -1166,11 +1907,12 @@ export default function BusinessWorkspace({
   // Add Product to Catalog
   const handleAddProduct = () => {
     if (!newProdName.trim()) return;
+    const activeCat = isCustomCategory ? customCategoryInput.trim() || "General" : newProdCategory;
     const newItem: CatalogItem = {
       id: createWsMessageId("prod"),
       sku: `SKU-${Math.floor(100 + Math.random() * 900)}`,
       name: newProdName.trim(),
-      category: newProdCategory.trim() || "General",
+      category: activeCat.trim() || "General",
       price: parseFloat(newProdPrice) || 0,
       stock: parseInt(newProdStock, 10) || 10,
       unit: newProdUnit.trim() || "pcs",
@@ -1186,6 +1928,92 @@ export default function BusinessWorkspace({
     setNewProdName("");
     setNewProdPrice("");
     setNewProdStock("");
+    if (isCustomCategory) {
+      setCustomCategoryInput("");
+    }
+  };
+
+  // PDF Catalog File Upload & AI Parser
+  const handleCatalogPdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      setCatalogPdfMessage({
+        text: "Only PDF files (.pdf) are allowed for product catalog import.",
+        type: "error"
+      });
+      if (catalogPdfInputRef.current) catalogPdfInputRef.current.value = "";
+      setTimeout(() => setCatalogPdfMessage(null), 5000);
+      return;
+    }
+
+    setIsUploadingCatalogPdf(true);
+    setCatalogPdfMessage(null);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64Data = (reader.result as string).split(",")[1];
+        const res = await MessageApiClient.uploadCatalogPdf(
+          {
+            fileName: file.name,
+            content: base64Data,
+            defaultCategory: isCustomCategory ? customCategoryInput.trim() : newProdCategory
+          },
+          account.apiKey
+        );
+
+        if (res && res.items && Array.isArray(res.items)) {
+          const mapped: CatalogItem[] = res.items.map((i: any) => ({
+            id: i.id || createWsMessageId("prod"),
+            sku: i.sku || `SKU-${Math.floor(100 + Math.random() * 900)}`,
+            name: i.name,
+            category: i.category || "General",
+            price: Number(i.price) || 0,
+            stock: typeof i.stock === "number" ? i.stock : 10,
+            unit: i.unit || "pcs",
+            description: i.description || "",
+            isAvailable: i.isAvailable !== false
+          }));
+
+          const updated = updateBusinessAccount(account.id, { catalog: mapped });
+          if (updated) onUpdateAccount(updated);
+
+          setCatalogPdfMessage({
+            text: `✅ Extracted & synced ${mapped.length} products from "${file.name}"!`,
+            type: "success"
+          });
+        } else {
+          setCatalogPdfMessage({
+            text: res?.message || "Catalog parsed successfully.",
+            type: "success"
+          });
+        }
+      } catch (err: any) {
+        setCatalogPdfMessage({
+          text: err.message || "Failed to parse PDF catalog.",
+          type: "error"
+        });
+      } finally {
+        setIsUploadingCatalogPdf(false);
+        if (catalogPdfInputRef.current) catalogPdfInputRef.current.value = "";
+        setTimeout(() => setCatalogPdfMessage(null), 6000);
+      }
+    };
+
+    reader.onerror = () => {
+      setIsUploadingCatalogPdf(false);
+      setCatalogPdfMessage({
+        text: "Could not read the PDF file.",
+        type: "error"
+      });
+      if (catalogPdfInputRef.current) catalogPdfInputRef.current.value = "";
+      setTimeout(() => setCatalogPdfMessage(null), 5000);
+    };
+
+    reader.readAsDataURL(file);
   };
 
   // Remove Product
@@ -1255,11 +2083,11 @@ export default function BusinessWorkspace({
 
   const navMenuItems = [
     { id: "dashboard" as DashboardTab, label: "Dashboard", shortLabel: "Dash", icon: LayoutDashboard },
-    { id: "settings" as DashboardTab, label: "Settings", shortLabel: "Settings", icon: Settings },
-    { id: "webqr" as DashboardTab, label: "Message WebQR", shortLabel: "WebQR", icon: QrCode },
+    { id: "session" as DashboardTab, label: "Sessions & WebQR", shortLabel: "Sessions & QR", icon: Key },
     { id: "chat" as DashboardTab, label: "Live Chat & Messaging", shortLabel: "Chat", icon: MessageSquare },
-    { id: "session" as DashboardTab, label: "Sessions", shortLabel: "Sessions", icon: Key },
     { id: "rag" as DashboardTab, label: "RAG Knowledge Base", shortLabel: "RAG", icon: Sparkles },
+    { id: "mcp" as DashboardTab, label: "MCP and DOC Info", shortLabel: "MCP & Docs", icon: BookOpen },
+    { id: "settings" as DashboardTab, label: "Settings", shortLabel: "Settings", icon: Settings },
   ];
 
   return (
@@ -1601,8 +2429,56 @@ export default function BusinessWorkspace({
 
                 {/* Add New Product Form */}
                 <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Quick Add Product / SKU</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 text-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Quick Add Product / SKU</h4>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="file"
+                        ref={catalogPdfInputRef}
+                        onChange={handleCatalogPdfUpload}
+                        accept=".pdf,application/pdf"
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => catalogPdfInputRef.current?.click()}
+                        disabled={isUploadingCatalogPdf}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                        title="Upload PDF catalog to auto-extract items"
+                      >
+                        {isUploadingCatalogPdf ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-teal-600" />
+                            <span>Parsing PDF...</span>
+                          </>
+                        ) : (
+                          <>
+                            <FileText className="w-3.5 h-3.5 text-rose-600" />
+                            <span>Upload PDF Catalog (.pdf)</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {catalogPdfMessage && (
+                    <div
+                      className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+                        catalogPdfMessage.type === "success"
+                          ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
+                          : "bg-rose-50 border border-rose-200 text-rose-800"
+                      }`}
+                    >
+                      {catalogPdfMessage.type === "success" ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                      ) : (
+                        <X className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                      )}
+                      <span>{catalogPdfMessage.text}</span>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-6 gap-2 text-xs">
                     <input
                       type="text"
                       placeholder="Item Name (e.g. Dolo 650mg)"
@@ -1610,6 +2486,50 @@ export default function BusinessWorkspace({
                       onChange={(e) => setNewProdName(e.target.value)}
                       className="sm:col-span-2 bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-teal-500"
                     />
+
+                    {/* Category Dropdown & Custom Category Input */}
+                    <div className="sm:col-span-1">
+                      {!isCustomCategory ? (
+                        <select
+                          value={newProdCategory}
+                          onChange={(e) => {
+                            if (e.target.value === "__custom__") {
+                              setIsCustomCategory(true);
+                              setCustomCategoryInput("");
+                            } else {
+                              setNewProdCategory(e.target.value);
+                            }
+                          }}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-slate-900 focus:outline-none focus:border-teal-500 font-medium"
+                        >
+                          {categoryPresets.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {cat}
+                            </option>
+                          ))}
+                          <option value="__custom__">+ Custom Category...</option>
+                        </select>
+                      ) : (
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Custom Category"
+                            value={customCategoryInput}
+                            onChange={(e) => setCustomCategoryInput(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 pr-6 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-teal-500 font-medium"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setIsCustomCategory(false)}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                            title="Back to dropdown presets"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
                     <input
                       type="number"
                       placeholder="Price (₹)"
@@ -1629,7 +2549,7 @@ export default function BusinessWorkspace({
                       disabled={!newProdName.trim() || !newProdPrice.trim()}
                       className={`rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all ${
                         newProdName.trim() && newProdPrice.trim()
-                          ? "bg-teal-600 hover:bg-teal-700 text-white shadow-xs"
+                          ? "bg-teal-600 hover:bg-teal-700 text-white shadow-xs cursor-pointer"
                           : "bg-slate-200 text-slate-400 cursor-not-allowed"
                       }`}
                     >
@@ -1977,117 +2897,7 @@ export default function BusinessWorkspace({
             </div>
           )}
 
-          {/* TAB 3: MESSAGE WEBQR (WhatsApp Web 1-Click QR Pairing) */}
-          {activeTab === "webqr" && (
-            <div className="max-w-3xl mx-auto space-y-6">
-              <div className="p-8 rounded-3xl bg-white border border-slate-200/90 shadow-md text-center space-y-6">
-                <div className="space-y-2">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 text-teal-700 text-xs font-bold border border-teal-200">
-                    <QrCode className="w-3.5 h-3.5 text-teal-600" />
-                    <span>WhatsApp Web Instant Pairing</span>
-                  </div>
-                  <h3 className="text-2xl font-black text-slate-900">Pair Your Store Phone With MessageAPI</h3>
-                  <p className="text-xs sm:text-sm text-slate-600 max-w-lg mx-auto">
-                    Open WhatsApp on your phone &gt; Settings &gt; Linked Devices &gt; Scan this QR code to connect <strong>{account.businessName}</strong>.
-                  </p>
-                </div>
 
-                {/* QR Code Container */}
-                <div className="relative inline-block p-6 rounded-3xl bg-white shadow-xl mx-auto border-4 border-teal-500/30">
-                  {/* Real Scannable QR Code */}
-                  <div className="w-56 h-56 bg-white rounded-2xl p-2 flex flex-col items-center justify-center relative overflow-hidden border border-slate-100 shadow-inner">
-                    <img
-                      src={webQrDataUrl}
-                      alt="WhatsApp Web QR Code"
-                      className="w-full h-full object-contain rounded-lg"
-                    />
-
-                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                      <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-blue-600 flex items-center justify-center text-white shadow-lg border-2 border-white">
-                        <IndustryIcon className="w-6 h-6" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {qrRefreshed && (
-                    <div className="absolute inset-0 bg-white/90 rounded-3xl flex items-center justify-center text-teal-600 text-xs font-bold">
-                      <RefreshCw className="w-6 h-6 animate-spin text-teal-600" />
-                    </div>
-                  )}
-                </div>
-
-                {/* Session Health Details */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-xl mx-auto text-xs text-left">
-                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase">Device</span>
-                    <p className="font-bold text-slate-900 truncate">WhatsApp Business</p>
-                    <span className="text-[10px] text-teal-600 font-semibold">Battery: 88% ⚡</span>
-                  </div>
-
-                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase">Latency</span>
-                    <p className="font-bold text-slate-900">38 ms</p>
-                    <span className="text-[10px] text-teal-600 font-semibold">SSE Live Stream</span>
-                  </div>
-
-                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase">Protection</span>
-                    <p className="font-bold text-teal-700">Anti-Ban Active</p>
-                    <span className="text-[10px] text-slate-500">{account.antiBanDelay.min}s–{account.antiBanDelay.max}s Pacing</span>
-                  </div>
-                </div>
-
-                {/* Add Session Input Area & Button */}
-                <div className="max-w-xl mx-auto space-y-3 pt-2">
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-left space-y-3">
-                    <label className="block text-xs font-bold text-slate-800">
-                      Create &amp; Pair New WhatsApp Session
-                    </label>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <input
-                        type="text"
-                        placeholder="Enter session name (e.g. Primary WhatsApp, Support Desk)..."
-                        value={qrSessionNameInput}
-                        onChange={(e) => setQrSessionNameInput(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleCreateSessionFromWebQr()}
-                        className="flex-1 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 shadow-2xs"
-                      />
-                      <button
-                        onClick={handleCreateSessionFromWebQr}
-                        disabled={!qrSessionNameInput.trim()}
-                        className={`px-5 py-2.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all flex-shrink-0 ${
-                          qrSessionNameInput.trim()
-                            ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white shadow-md shadow-teal-500/20"
-                            : "bg-slate-200 text-slate-400 cursor-not-allowed"
-                        }`}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Add Session</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {sessionCreatedMessage && (
-                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center justify-center gap-2 animate-in fade-in">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                      <span>{sessionCreatedMessage}</span>
-                    </div>
-                  )}
-
-                  {/* Refresh QR Code Button */}
-                  <div className="flex justify-center pt-1">
-                    <button
-                      onClick={handleRefreshQr}
-                      className="px-5 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-2 border border-slate-200 shadow-xs transition-all"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Refresh QR Code</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* TAB 4: LIVE CHAT & MESSAGING (Authentic WhatsApp Web Interface & Complete Features) */}
           {activeTab === "chat" && (
@@ -2306,7 +3116,7 @@ export default function BusinessWorkspace({
                         <div
                           key={c.id}
                           onClick={() => handleSelectContact(c.id)}
-                          className={`p-3.5 flex items-center gap-3 cursor-pointer transition-colors ${
+                          className={`p-3.5 flex items-center gap-3 cursor-pointer transition-colors relative group ${
                             isActive ? "bg-slate-100/90" : "hover:bg-slate-50"
                           }`}
                         >
@@ -2332,7 +3142,9 @@ export default function BusinessWorkspace({
                                 {c.messages[c.messages.length - 1]?.sender === "business" && (
                                   <CheckCheck className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
                                 )}
-                                <span className="truncate">{c.lastMessage}</span>
+                                <span className="truncate">
+                                  {c.lastMessage ? c.lastMessage.replace(/\*+/g, "").replace(/_+/g, "") : ""}
+                                </span>
                               </p>
 
                               {c.unreadCount > 0 && (
@@ -2342,9 +3154,22 @@ export default function BusinessWorkspace({
                               )}
                             </div>
 
-                            <span className="inline-block mt-1 px-2 py-0.2 rounded-md bg-slate-100 text-slate-600 text-[9px] font-semibold">
-                              {c.tag}
-                            </span>
+                            <div className="flex items-center justify-between mt-1 pt-0.5">
+                              <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[9px] font-semibold truncate max-w-[130px]">
+                                {c.tag}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setContactToDelete(c);
+                                }}
+                                className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all cursor-pointer opacity-0 group-hover:opacity-100 focus:opacity-100"
+                                title="Delete this chat"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 hover:scale-110 transition-transform" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -2366,44 +3191,169 @@ export default function BusinessWorkspace({
               {/* WhatsApp Right Main Chat Window */}
               {activeContact ? (
                 <div className="flex-1 min-h-0 flex flex-col h-full bg-[#efeae2]/40 relative">
-                {/* Active Chat Header */}
-                <div className="p-3.5 bg-slate-100/95 border-b border-slate-200 flex items-center justify-between flex-shrink-0 z-10">
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <div className={`w-10 h-10 rounded-full ${activeContact.avatarBg} text-white font-black text-sm flex items-center justify-center shadow-xs`}>
-                        {activeContact.initials}
-                      </div>
-                      {activeContact.isOnline && (
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white absolute bottom-0 right-0" />
-                      )}
+                {/* Active Chat Header / Multi-Select Action Bar */}
+                {selectedMessageIds.length > 0 ? (
+                  <div className="p-3.5 bg-teal-800 text-white border-b border-teal-900 flex items-center justify-between flex-shrink-0 z-20 shadow-xs animate-in fade-in duration-150">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMessageIds([])}
+                        className="p-1.5 rounded-full hover:bg-white/15 text-white/90 hover:text-white transition-colors cursor-pointer"
+                        title="Cancel selection (Esc)"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                      <span className="text-xs sm:text-sm font-bold tracking-wide">
+                        {selectedMessageIds.length} {selectedMessageIds.length === 1 ? "message selected" : "messages selected"}
+                      </span>
                     </div>
 
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <span>{activeContact.name}</span>
-                        <span className="text-[10px] text-slate-400 font-normal font-mono">{activeContact.phone}</span>
-                      </h4>
-                      <p className="text-[10px] text-teal-700 font-medium">
-                        {isTyping ? "typing..." : activeContact.statusText}
-                      </p>
+                    <div className="flex items-center gap-2 mr-2.5">
+                      {/* PIN / UNPIN ICON BUTTON (Only 1 message can pin) */}
+                      {selectedMessageIds.length === 1 && (() => {
+                        const targetId = selectedMessageIds[0];
+                        const isSelectedPinned =
+                          activeContact.pinnedMessageId === targetId ||
+                          Boolean(activeContact.messages.find((m) => m.id === targetId)?.isPinned);
+
+                        return (
+                          <button
+                            type="button"
+                            onClick={handleTogglePinSelected}
+                            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${
+                              isSelectedPinned
+                                ? "bg-amber-400 text-amber-950 hover:bg-amber-300 shadow-xs"
+                                : "bg-white/10 hover:bg-white/20 text-white"
+                            }`}
+                            title={isSelectedPinned ? "Unpin message" : "Pin message"}
+                          >
+                            {isSelectedPinned ? (
+                              <>
+                                <PinOff className="w-4 h-4" />
+                                <span className="hidden sm:inline">Unpin</span>
+                              </>
+                            ) : (
+                              <>
+                                <Pin className="w-4 h-4" />
+                                <span className="hidden sm:inline">Pin</span>
+                              </>
+                            )}
+                          </button>
+                        );
+                      })()}
+
+                      {/* DELETE ICON BUTTON */}
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteMessagesModal(true)}
+                        className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-all flex items-center gap-1.5 text-xs font-bold shadow-xs cursor-pointer"
+                        title={`Delete ${selectedMessageIds.length} message(s)`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span>Delete</span>
+                      </button>
                     </div>
                   </div>
+                ) : (
+                  <div className="p-3.5 bg-slate-100/95 border-b border-slate-200 flex items-center justify-between flex-shrink-0 z-10">
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <div className={`w-10 h-10 rounded-full ${activeContact.avatarBg} text-white font-black text-sm flex items-center justify-center shadow-xs`}>
+                          {activeContact.initials}
+                        </div>
+                        {activeContact.isOnline && (
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white absolute bottom-0 right-0" />
+                        )}
+                      </div>
 
-                  {/* <div className="flex items-center gap-1.5 text-slate-600">
-                    <button className="p-2 hover:bg-slate-200/80 rounded-full transition-colors text-slate-600" title="Voice Call">
-                      <Phone className="w-4 h-4" />
-                    </button>
-                    <button className="p-2 hover:bg-slate-200/80 rounded-full transition-colors text-slate-600" title="Video Call">
-                      <Video className="w-4 h-4" />
-                    </button>
-                    <button className="p-2 hover:bg-slate-200/80 rounded-full transition-colors text-slate-600" title="Search in chat">
-                      <Search className="w-4 h-4" />
-                    </button>
-                    <button className="p-2 hover:bg-slate-200/80 rounded-full transition-colors text-slate-600" title="More Options">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
-                  </div> */}
-                </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                          <span>{activeContact.name}</span>
+                          <span className="text-[10px] text-slate-400 font-normal font-mono">
+                            {activeContact.phone?.includes("@lid") || activeContact.phone?.startsWith("+200")
+                              ? "WhatsApp (LID Linked)"
+                              : activeContact.phone}
+                          </span>
+                        </h4>
+                        <p className="text-[10px] text-teal-700 font-medium">
+                          {isTyping ? "typing..." : activeContact.statusText}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 mr-3">
+                      <div className="px-3 py-1.5 rounded-[5px] text-xs font-semibold flex items-center gap-2 bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-2xs">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span>💬 Store Direct Chat • Live WhatsApp</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sticky Pinned Message in Top Bar */}
+                {(() => {
+                  const pinnedMsg =
+                    activeContact?.messages.find((m) => m.id === activeContact?.pinnedMessageId && m.isPinned !== false) ||
+                    activeContact?.messages.find((m) => m.isPinned);
+                  if (!pinnedMsg || pinnedMsg.isPinned === false) return null;
+                  const rawPinnedText = pinnedMsg.text
+                    ? pinnedMsg.text.replace(/\[IMAGE_URL:\s*https?:\/\/[^\]\s]+\]/gi, "").replace(/\*+/g, "").replace(/_+/g, "").trim()
+                    : pinnedMsg.mediaUrl ? "Media Attachment" : "Message";
+
+                  // User rule: if below text length 10 then show full, otherwise split at 10 + "..."
+                  const displaySnippet =
+                    rawPinnedText.length <= 10
+                      ? rawPinnedText
+                      : `${rawPinnedText.slice(0, 10)}...`;
+
+                  return (
+                    <div
+                      onClick={handleScrollToPinned}
+                      className="px-4 py-2 bg-white/95 backdrop-blur-xs border-b border-teal-200/60 shadow-2xs flex items-center justify-between cursor-pointer hover:bg-teal-50/40 transition-colors z-10"
+                      title="Click to jump to pinned message"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-6 h-6 rounded-full bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0 shadow-2xs">
+                          <Pin className="w-3.5 h-3.5 text-teal-700 fill-teal-600/30" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-extrabold text-teal-800 uppercase tracking-wider">Pinned Message</span>
+                            <span className="text-[10px] text-slate-400">• {pinnedMsg.timestamp}</span>
+                          </div>
+                          <p className="text-xs text-slate-700 truncate font-medium flex items-center gap-1">
+                            <span className="font-bold text-slate-900">
+                              {pinnedMsg.sender === "customer" ? `${activeContact.name}:` : "You:"}
+                            </span>
+                            <span>{displaySnippet || "Pinned message"}</span>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleScrollToPinned();
+                          }}
+                          className="px-2.5 py-1 rounded-[5px] bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-800 text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                          title="Jump to pinned message"
+                        >
+                          <span>View</span>
+                          <ArrowRight className="w-3 h-3 text-teal-600" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleUnpinDirectly}
+                          className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                          title="Unpin message"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Messages Canvas */}
                 <div 
@@ -2429,53 +3379,272 @@ export default function BusinessWorkspace({
                   </div>
 
                   {/* Messages Stream */}
+                  {isLoadingMessages && (!activeContact.messages || activeContact.messages.length === 0) ? (
+                    <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-400 animate-in fade-in">
+                      <RefreshCw className="w-5 h-5 animate-spin text-teal-600" />
+                      <span className="text-xs font-medium text-slate-500">Restoring encrypted message history...</span>
+                    </div>
+                  ) : (!activeContact.messages || activeContact.messages.length === 0) ? (
+                    activeContact.lastMessage && activeContact.lastMessage !== "Chat opened" ? (
+                      <div className="space-y-3">
+                        <div className={`flex ${activeContact.lastMessage.startsWith("💪") || activeContact.lastMessage.startsWith("Here is your image") || activeContact.lastMessage.toLowerCase().includes("welcome to") ? "justify-end" : "justify-start"}`}>
+                          <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-xs ${activeContact.lastMessage.startsWith("💪") || activeContact.lastMessage.startsWith("Here is your image") || activeContact.lastMessage.toLowerCase().includes("welcome to") ? "bg-[#d9fdd3] text-slate-800" : "bg-white text-slate-800"}`}>
+                            <p className="leading-relaxed whitespace-pre-wrap">{activeContact.lastMessage.replace(/\*+/g, "").replace(/_+/g, "")}</p>
+                            <span className="text-[9px] text-slate-400 block text-right mt-1">{activeContact.lastTime || "Earlier"}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-12 text-slate-400 space-y-1.5 animate-in fade-in">
+                        <p className="text-xs font-bold text-slate-600">Conversation started</p>
+                        <p className="text-[11px] text-slate-400">Send a message below to chat with {activeContact.name} on WhatsApp.</p>
+                      </div>
+                    )
+                  ) : null}
                   {activeContact.messages.map((m) => {
                     const isUser = m.sender === "customer";
-                    const isVoice = m.text.includes("🎙️");
+                    const normalizedType = (m.messageType || "").toLowerCase();
+
+                    const pdfUrlMatch = m.text.match(/\[PDF_URL:\s*(https?:\/\/[^\]\s]+)\]/i);
+                    const pdfNameMatch = m.text.match(/•\s*\*Document:\*\s*([^\n\r]+)/i) || m.text.match(/\[PDF_NAME:\s*([^\]\s]+)\]/i);
+
+                    const isDoc =
+                      normalizedType === "document" ||
+                      !!pdfUrlMatch ||
+                      !!pdfNameMatch ||
+                      (!!m.mediaUrl && (/\.pdf($|\?)/i.test(m.mediaUrl) || m.mediaUrl.includes("gym_pdf") || m.mediaUrl.includes("/raw/upload"))) ||
+                      m.text.includes("[PDF Document]") ||
+                      m.text.includes("[PDF_NAME:") ||
+                      m.text.includes("[PDF_URL:") ||
+                      m.text.includes("official PDF document") ||
+                      m.text.includes("Document:* gym_pdf");
+
+                    const isVoice =
+                      normalizedType === "audio" ||
+                      m.text.includes("🎙️") ||
+                      m.text.includes("[User sent a voice message") ||
+                      (!!m.mediaUrl && /\.(ogg|mp3|wav|m4a)($|\?)/i.test(m.mediaUrl));
+
+                    // Image detection - STRICTLY EXCLUDES ANY DOCUMENT OR VOICE MESSAGE
+                    const imageUrlMatch = !isDoc && !isVoice ? m.text.match(/\[IMAGE_URL:\s*(https?:\/\/[^\]\s]+)\]/i) : null;
+                    const rawImgUrl = !isDoc && !isVoice
+                      ? (imageUrlMatch ? imageUrlMatch[1] : (normalizedType === "image" ? (m.mediaUrl || "") : (m.mediaUrl && /\.(jpg|jpeg|png|webp|gif)($|\?)/i.test(m.mediaUrl) ? m.mediaUrl : "")))
+                      : "";
+
+                    const resolvedImageUrl = rawImgUrl
+                      ? (rawImgUrl.startsWith("http") ? rawImgUrl : `${BACKEND_URL}${rawImgUrl}`)
+                      : "";
+
+                    const hasImage =
+                      !isDoc &&
+                      !isVoice &&
+                      normalizedType !== "document" &&
+                      normalizedType !== "audio" &&
+                      !!resolvedImageUrl &&
+                      (normalizedType === "image" ||
+                        !!imageUrlMatch ||
+                        /\.(jpg|jpeg|png|webp|gif)($|\?)/i.test(resolvedImageUrl) ||
+                        resolvedImageUrl.includes("/uploads/gen_image") ||
+                        (resolvedImageUrl.includes("cloudinary.com") && !resolvedImageUrl.includes("/raw/upload") && !resolvedImageUrl.includes(".pdf") && !resolvedImageUrl.includes("gym_pdf")));
+
+                    const rawDocUrl = pdfUrlMatch
+                      ? pdfUrlMatch[1]
+                      : (isDoc && m.mediaUrl ? m.mediaUrl : "");
+
+                    const resolvedDocUrl = rawDocUrl
+                      ? (rawDocUrl.startsWith("http") ? rawDocUrl : `${BACKEND_URL}${rawDocUrl}`)
+                      : "";
+
+                    const downloadDocUrl = resolvedDocUrl.includes("res.cloudinary.com") && resolvedDocUrl.includes("/upload/")
+                      ? resolvedDocUrl.replace("/upload/", "/upload/fl_attachment/")
+                      : resolvedDocUrl;
+
+                    let docName = pdfNameMatch
+                      ? pdfNameMatch[1].trim()
+                      : (rawDocUrl && (rawDocUrl.includes(".pdf") || rawDocUrl.includes("gym_pdf"))
+                          ? rawDocUrl.split("/").pop()?.split("?")[0] || ""
+                          : `gym_pdf_${Date.now()}.pdf`);
+
+                    if (docName && !docName.endsWith(".pdf")) {
+                      docName = `${docName}.pdf`;
+                    }
+
+                    const cleanedText = m.text
+                      .replace(/\[IMAGE_URL:\s*https?:\/\/[^\]\s]+\]/gi, "")
+                      .replace(/\[PDF_URL:\s*https?:\/\/[^\]\s]+\]/gi, "")
+                      .replace(/\[PDF_NAME:\s*[^\]\s]+\]/gi, "")
+                      .replace(/\[PDF Document\]/gi, "")
+                      .trim();
+
+                    // Parse potential voice message transcript
+                    const voiceTranscriptMatch = cleanedText.match(/\[User sent a voice message\.\s*Transcript:\s*"(.*?)"\]/s);
+                    const voiceTranscript = voiceTranscriptMatch ? voiceTranscriptMatch[1] : null;
+                    const displaySpeechText = voiceTranscript || cleanedText.replace(/🎙️\s*\[.*?\]\s*/, "").trim();
+
+                    const isSelected = selectedMessageIds.includes(m.id);
+                    const isPinned = Boolean(m.isPinned || (activeContact?.pinnedMessageId === m.id && m.isPinned !== false));
+
                     return (
-                      <div key={m.id} className={`flex ${isUser ? "justify-start" : "justify-end"}`}>
-                        <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl p-3 text-xs shadow-xs relative ${
+                      <div
+                        id={`msg_${m.id}`}
+                        key={m.id}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          handleMessageDoubleClick(m.id);
+                        }}
+                        onClick={(e) => {
+                          if (selectedMessageIds.length > 0) {
+                            e.stopPropagation();
+                            handleMessageClick(m.id);
+                          }
+                        }}
+                        className={`flex items-center gap-2.5 transition-all duration-150 select-none ${
+                          isUser ? "justify-start" : "justify-end"
+                        } ${isSelected ? "bg-teal-600/10 -mx-3 px-3 py-1.5 rounded-xl" : ""}`}
+                      >
+                        {/* Checkbox indicator when in selection mode */}
+                        {selectedMessageIds.length > 0 && (
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMessageClick(m.id);
+                            }}
+                            className={`w-4 h-4 rounded-[4px] flex items-center justify-center cursor-pointer transition-all flex-shrink-0 ${
+                              isSelected
+                                ? "bg-teal-600 text-white shadow-xs"
+                                : "border-2 border-slate-300 bg-white hover:border-teal-500"
+                            }`}
+                            title={isSelected ? "Deselect" : "Select"}
+                          >
+                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                          </div>
+                        )}
+
+                        <div className={`max-w-[88%] sm:max-w-[72%] rounded-2xl p-3 text-xs shadow-xs relative transition-all ${
+                          isSelected ? "ring-2 ring-teal-500 shadow-md scale-[1.005]" : ""
+                        } ${
                           isUser
                             ? "bg-white text-slate-800 rounded-tl-xs border border-slate-200/80"
                             : "bg-[#d9fdd3] text-slate-900 rounded-tr-xs border border-emerald-200/60"
-                        }`}>
+                        } ${selectedMessageIds.length > 0 ? "cursor-pointer" : ""}`}>
+                          {/* AI Image Attachment Preview Card - NEVER for documents */}
+                          {hasImage && resolvedImageUrl && (
+                            <div className="mb-2">
+                              <ChatImageAttachment
+                                imageUrl={resolvedImageUrl}
+                                caption={cleanedText}
+                                isUser={isUser}
+                              />
+                            </div>
+                          )}
+
+                          {/* PDF Document Card - Clean File Name + Direct Download Option (No Preview) */}
+                          {isDoc && (
+                            <div className="p-2.5 sm:p-3 rounded-xl bg-white/95 border border-rose-200/90 shadow-xs mb-2 text-left">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                  <div className="w-9 h-9 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-center flex-shrink-0 shadow-2xs">
+                                    <FileText className="w-5 h-5 text-rose-600" />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded">PDF</span>
+                                      <p className="font-bold text-slate-900 truncate text-xs" title={docName}>
+                                        {docName}
+                                      </p>
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                                      Official PDF Document
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {resolvedDocUrl && (
+                                  <a
+                                    href={downloadDocUrl}
+                                    download={docName}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="flex-shrink-0 py-1.5 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
+                                    title="Download PDF"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                    <span>Download</span>
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
                           {/* Voice Note Player UI */}
                           {isVoice ? (
                             <div className="space-y-2">
-                              <div className="flex items-center gap-2.5">
+                              <div className="flex items-center gap-2.5 bg-black/5 dark:bg-white/5 p-2 rounded-xl">
                                 <button
-                                  onClick={() => setPlayingAudioId(playingAudioId === m.id ? null : m.id)}
-                                  className="w-8 h-8 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shadow-xs transition-colors flex-shrink-0"
+                                  type="button"
+                                  onClick={() => handlePlayAudio(m.id, m.mediaUrl, displaySpeechText)}
+                                  className="w-9 h-9 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shadow-xs transition-colors flex-shrink-0 cursor-pointer"
+                                  title={playingAudioId === m.id ? "Pause Voice Note" : "Play Voice Note"}
                                 >
-                                  {playingAudioId === m.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 ml-0.5" />}
+                                  {playingAudioId === m.id ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
                                 </button>
                                 <div className="flex-1 space-y-1">
                                   <div className="flex items-center gap-1 h-4">
-                                    {[40, 70, 30, 90, 60, 100, 45, 80, 50, 75, 35, 95, 60, 40].map((h, idx) => (
+                                    {[35, 70, 30, 95, 60, 100, 45, 85, 50, 75, 40, 95, 60, 40].map((h, idx) => (
                                       <span
                                         key={idx}
                                         style={{ height: `${h}%` }}
-                                        className={`w-1 rounded-full ${
+                                        className={`w-1 rounded-full transition-all duration-200 ${
                                           playingAudioId === m.id ? "bg-emerald-600 animate-pulse" : "bg-slate-300"
                                         }`}
                                       />
                                     ))}
                                   </div>
                                   <div className="flex justify-between text-[9px] text-slate-500 font-mono">
-                                    <span>{playingAudioId === m.id ? "0:03" : "0:06"}</span>
-                                    <span>Voice Note Audio</span>
+                                    <span>{playingAudioId === m.id ? "Playing audio..." : "Voice Note"}</span>
+                                    <span className="flex items-center gap-1 font-semibold text-emerald-700">
+                                      <Mic className="w-2.5 h-2.5" />
+                                      {isUser ? "Customer Voice" : "AI Voice (PTT)"}
+                                    </span>
                                   </div>
                                 </div>
                               </div>
-                              <p className="text-[10px] text-slate-600 italic bg-white/70 p-1.5 rounded-lg border border-slate-200/60">
-                                {m.text.replace(/🎙️\s*\[.*?\]\s*/, "")}
-                              </p>
+
+                              {/* Voice Note Transcript & Text Message attached */}
+                              {displaySpeechText && (
+                                <div className={`p-2.5 rounded-xl border leading-relaxed ${
+                                  isUser
+                                    ? "bg-slate-50/90 text-slate-700 border-slate-200/80 text-[11px]"
+                                    : "bg-white/90 text-slate-900 border-emerald-200/70 text-xs"
+                                }`}>
+                                  {isUser && voiceTranscript && (
+                                    <div className="text-[10px] font-bold text-amber-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                                      <Sparkles className="w-3 h-3 text-amber-500" />
+                                      Groq Whisper Transcript
+                                    </div>
+                                  )}
+                                  <div className="whitespace-pre-line font-sans">
+                                    <WhatsAppText text={displaySpeechText} />
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ) : (
-                            <p className="whitespace-pre-line leading-relaxed font-sans">{m.text}</p>
+                            cleanedText ? (
+                              <div className="whitespace-pre-line leading-relaxed font-sans">
+                                <WhatsAppText text={cleanedText} />
+                              </div>
+                            ) : null
                           )}
 
                           <div className="flex items-center justify-end gap-1 mt-1 text-[9px] text-slate-400">
+                            {isPinned && (
+                              <span className="inline-flex items-center gap-0.5 text-teal-800 font-extrabold bg-teal-50 px-1 py-0.2 rounded border border-teal-200 text-[8px] mr-1">
+                                <Pin className="w-2.5 h-2.5 fill-teal-600/40" />
+                                <span>Pinned</span>
+                              </span>
+                            )}
                             <span>{m.timestamp}</span>
                             {!isUser && <CheckCheck className="w-3.5 h-3.5 text-blue-500" />}
                           </div>
@@ -2503,34 +3672,81 @@ export default function BusinessWorkspace({
                 </div>
 
                 {/* Suggested Quick Prompt Chips */}
+                {/* Store Quick Replies (Agent Canned Responses) */}
                 <div className="p-2 bg-slate-100/90 border-t border-slate-200 overflow-x-auto flex items-center gap-1.5 flex-shrink-0 text-xs">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1 flex-shrink-0">
-                    Quick Ask:
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1 flex-shrink-0">
+                    ⚡ Quick Store Replies:
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sampleSubject =
+                        account.category === "gym"
+                          ? "Please generate a gym equipment image"
+                          : account.category === "medicine"
+                          ? "Please generate an organized pharmacy medicine shelves image"
+                          : account.category === "grocery"
+                          ? "Please generate a fresh organic fruits basket image"
+                          : account.category === "electronics"
+                          ? "Please generate a gaming battle station desk image"
+                          : account.category === "restaurant"
+                          ? "Please generate a signature gourmet biryani platter image"
+                          : account.category === "salon"
+                          ? "Please generate a luxury spa hair makeover salon image"
+                          : "Please generate an image of our business office";
+                      setInputPrompt(sampleSubject);
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-[11px] font-bold whitespace-nowrap transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
+                    title="Insert category-specific AI image creation prompt"
+                  >
+                    <Sparkles className="w-3 h-3 text-emerald-600" />
+                    <span>🎨 Test AI Image</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const greet = (account.greetingMessage || `Hello! Welcome to ${account.businessName}! How can we assist you today?`)
+                        .replace(/{BusinessName}/g, account.businessName);
+                      setInputPrompt(greet);
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-300 text-slate-700 text-[11px] font-medium whitespace-nowrap transition-colors shadow-2xs cursor-pointer"
+                    title="Insert welcome greeting into message"
+                  >
+                    👋 Insert Greeting
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInputPrompt(`🕒 We are open *${account.workingHours}*. Feel free to visit us or contact our front desk at *${account.phone}*!`);
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-300 text-slate-700 text-[11px] font-medium whitespace-nowrap transition-colors shadow-2xs cursor-pointer"
+                    title="Insert working hours into message"
+                  >
+                    ⏰ Operating Hours
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInputPrompt(`📍 Our store location is: *${account.address || "Main Road"}*. Contact: *${account.phone}*. Let us know if you need directions!`);
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-300 text-slate-700 text-[11px] font-medium whitespace-nowrap transition-colors shadow-2xs cursor-pointer"
+                    title="Insert location into message"
+                  >
+                    📍 Store Location
+                  </button>
                   {account.catalog.slice(0, 3).map((item) => (
                     <button
                       key={item.id}
-                      onClick={() => handleSendMessage(`What is the price and stock of ${item.name}?`)}
-                      disabled={isTyping}
-                      className="px-2.5 py-1 rounded-full bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-300 text-slate-700 text-[11px] font-medium whitespace-nowrap transition-colors shadow-2xs"
+                      type="button"
+                      onClick={() => {
+                        setInputPrompt(`🏷️ *${item.name}* is available at *${account.currency}${item.price.toFixed(2)}*${item.unit && item.unit !== "pcs" ? ` / ${item.unit}` : ""}.${item.description ? ` Details: ${item.description}` : ""}`);
+                      }}
+                      className="px-2.5 py-1 rounded-full bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-300 text-slate-700 text-[11px] font-medium whitespace-nowrap transition-colors shadow-2xs cursor-pointer"
+                      title={`Insert info for ${item.name}`}
                     >
-                      💰 Price of {item.name}?
+                      🏷️ {item.name}
                     </button>
                   ))}
-                  <button
-                    onClick={() => handleSendMessage("What are your store working hours and location?")}
-                    disabled={isTyping}
-                    className="px-2.5 py-1 rounded-full bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-300 text-slate-700 text-[11px] font-medium whitespace-nowrap transition-colors shadow-2xs"
-                  >
-                    ⏰ Hours &amp; Location?
-                  </button>
-                  <button
-                    onClick={() => handleSendMessage("Do you provide doorstep delivery?")}
-                    disabled={isTyping}
-                    className="px-2.5 py-1 rounded-full bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-300 text-slate-700 text-[11px] font-medium whitespace-nowrap transition-colors shadow-2xs"
-                  >
-                    🚚 Delivery info?
-                  </button>
                 </div>
 
                 {/* Attachment Drawer Menu */}
@@ -2558,7 +3774,7 @@ export default function BusinessWorkspace({
                       <span>Product Card</span>
                     </button>
                     <button
-                      onClick={() => handleSendMessage(`🎙️ [Voice Note: 0:05s]: Audio inquiry for ${account.businessName}`)}
+                      onClick={() => handleSendMessage(`🎙️ [Voice Note: 0:05s]: Audio message from ${account.businessName}`)}
                       className="flex items-center gap-2 p-2.5 rounded-[5px] hover:bg-slate-100 text-slate-700 transition-colors"
                     >
                       <Mic className="w-4 h-4 text-rose-600" />
@@ -2680,7 +3896,7 @@ export default function BusinessWorkspace({
                     value={inputPrompt}
                     onChange={(e) => setInputPrompt(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-                    placeholder={`Type a message to ${activeContact.name}...`}
+                    placeholder={`Reply as ${account.businessName} to ${activeContact.name} on WhatsApp...`}
                     disabled={isTyping}
                     className="flex-1 bg-white text-slate-900 placeholder-slate-400 rounded-[5px] px-4 py-2 text-xs border border-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
                   />
@@ -2693,7 +3909,7 @@ export default function BusinessWorkspace({
                         ? "bg-rose-500 text-white animate-pulse"
                         : "hover:bg-slate-200 text-slate-600"
                     }`}
-                    title={isRecording ? "Click to Send Voice Note" : "Hold/Click to Record Voice Note"}
+                    title={isRecording ? "Click to Send Voice Note" : "Send Voice Note as Store Agent"}
                   >
                     <Mic className="w-4 h-4" />
                   </button>
@@ -2702,6 +3918,7 @@ export default function BusinessWorkspace({
                   <button
                     onClick={() => handleSendMessage()}
                     disabled={!inputPrompt.trim() || isTyping}
+                    title={`Send directly to ${activeContact.name}'s WhatsApp`}
                     className={`p-2.5 rounded-[5px] text-white transition-all cursor-pointer ${
                       inputPrompt.trim() && !isTyping
                         ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 shadow-sm shadow-teal-500/20"
@@ -2768,6 +3985,104 @@ export default function BusinessWorkspace({
                         className="flex-1 py-2.5 px-4 rounded-[5px] bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold shadow-md shadow-rose-600/20 transition-colors cursor-pointer"
                       >
                         Yes, Delete All
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODAL 1B: Delete Single Contact Chat Confirmation Modal */}
+              {contactToDelete && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
+                  <div className="bg-white rounded-[5px] border border-slate-200 max-w-sm w-full p-6 shadow-2xl space-y-4 text-center">
+                    <div className="w-12 h-12 rounded-[5px] bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-200">
+                      <Trash2 className="w-6 h-6" />
+                    </div>
+
+                    <div className="space-y-1">
+                      <h3 className="text-base font-black text-slate-900">Delete This Chat?</h3>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        Are you sure you want to delete the entire conversation with <strong className="text-slate-800">{contactToDelete.name}</strong>? All {contactToDelete.messages.length} messages and attachments in this chat will be permanently removed.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setContactToDelete(null)}
+                        disabled={isDeletingContact}
+                        className="flex-1 py-2.5 px-4 rounded-[5px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConfirmDeleteContact}
+                        disabled={isDeletingContact}
+                        className="flex-1 py-2.5 px-4 rounded-[5px] bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold shadow-md shadow-rose-600/20 transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                        {isDeletingContact ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Deleting...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete Chat</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODAL 1C: Delete Selected Inner Message(s) Confirmation Modal */}
+              {showDeleteMessagesModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
+                  <div className="bg-white rounded-[5px] border border-slate-200 max-w-sm w-full p-6 shadow-2xl space-y-4 text-center">
+                    <div className="w-12 h-12 rounded-[5px] bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-200">
+                      <Trash2 className="w-6 h-6" />
+                    </div>
+
+                    <div className="space-y-1">
+                      <h3 className="text-base font-black text-slate-900">
+                        {selectedMessageIds.length === 1 ? "Delete Message?" : `Delete ${selectedMessageIds.length} Messages?`}
+                      </h3>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        {selectedMessageIds.length === 1
+                          ? "Are you sure you want to delete this message? It will be permanently removed from this conversation history."
+                          : `Are you sure you want to delete these ${selectedMessageIds.length} messages? They will be permanently removed from this conversation history.`}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteMessagesModal(false)}
+                        disabled={isDeletingMessages}
+                        className="flex-1 py-2.5 px-4 rounded-[5px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConfirmDeleteMessages}
+                        disabled={isDeletingMessages}
+                        className="flex-1 py-2.5 px-4 rounded-[5px] bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold shadow-md shadow-rose-600/20 transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                        {isDeletingMessages ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Deleting...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>
@@ -2962,29 +4277,67 @@ export default function BusinessWorkspace({
             </div>
           )}
 
-          {/* TAB 5: SESSIONS (Multi-Device WhatsApp Session Management & Developer Tokens) */}
+          {/* TAB 5: SESSIONS & WEBQR (Multi-Device WhatsApp Session Management & WebQR Pairing) */}
           {activeTab === "session" && (
-            <div className="max-w-12xl mx-auto space-y-8">
-              {/* Sessions Header */}
+            <div className="max-w-12xl mx-auto space-y-6">
+              {/* Sessions & WebQR Header */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-[5px] border border-slate-200/90 shadow-sm">
                 <div>
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-[5px] bg-teal-50 text-teal-700 text-xs font-bold border border-teal-200 mb-2">
                     <Key className="w-3.5 h-3.5 text-teal-600" />
-                    <span>Multi-Device WhatsApp Gateway</span>
+                    <span>Multi-Device WhatsApp Gateway &amp; WebQR</span>
                   </div>
-                  <h3 className="text-xl font-black text-slate-900">Active WhatsApp Sessions</h3>
+                  <h3 className="text-xl font-black text-slate-900">Active WhatsApp Sessions &amp; WebQR</h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Manage multi-device connections, monitor health telemetry, and pair new store instances.
+                    Manage multi-device connections, monitor live telemetry, and pair new store instances via WhatsApp WebQR.
                   </p>
                 </div>
 
                 <button
-                  onClick={() => setActiveTab("webqr")}
+                  onClick={handleOpenConnectModal}
                   className="px-5 py-2.5 rounded-[5px] bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white text-xs font-extrabold flex items-center gap-2 shadow-md shadow-teal-500/20 transition-all flex-shrink-0 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Connect New Session</span>
                 </button>
+              </div>
+
+              {/* Live Telemetry Quick Strip */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-4 rounded-[5px] bg-white border border-slate-200/90 shadow-xs flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Live Connected</span>
+                    <span className="text-lg font-black text-slate-900">
+                      {sessions.filter((s) => s.status === "CONNECTED").length}{" "}
+                      <span className="text-xs font-semibold text-slate-400">/ {sessions.length} Instances</span>
+                    </span>
+                  </div>
+                  <div className="w-9 h-9 rounded-[5px] bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-200">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-[5px] bg-white border border-slate-200/90 shadow-xs flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Gateway Engine</span>
+                    <span className="text-xs font-black text-slate-900 block truncate">Multi-Device WebSocket</span>
+                    <span className="text-[10px] text-teal-600 font-semibold">SSE Live Streaming Active</span>
+                  </div>
+                  <div className="w-9 h-9 rounded-[5px] bg-teal-50 text-teal-600 flex items-center justify-center border border-teal-200">
+                    <Zap className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-[5px] bg-white border border-slate-200/90 shadow-xs flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Anti-Ban Protection</span>
+                    <span className="text-xs font-black text-teal-700 block">Safe Human Pacing Active</span>
+                    <span className="text-[10px] text-slate-500 font-mono">{account.antiBanDelay.min}s–{account.antiBanDelay.max}s Random Delay</span>
+                  </div>
+                  <div className="w-9 h-9 rounded-[5px] bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-200">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                </div>
               </div>
 
               {/* Active Connected Sessions Grid */}
@@ -3086,29 +4439,29 @@ export default function BusinessWorkspace({
                     <div className="space-y-1">
                       <h4 className="text-sm font-black text-slate-900">No WhatsApp Sessions Connected</h4>
                       <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                        Add a new session to connect your WhatsApp number. You can scan the QR code from WhatsApp on your phone.
+                        Connect a new session to pair your WhatsApp phone. You can scan the QR code from WhatsApp on your device.
                       </p>
                     </div>
                     <button
-                      onClick={handleAddNewSession}
+                      onClick={handleOpenConnectModal}
                       className="px-5 py-2.5 rounded-[5px] bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white text-xs font-extrabold shadow-sm shadow-teal-500/20 inline-flex items-center gap-2 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
-                      <span>Add New WhatsApp Session</span>
+                      <span>+ Add New WhatsApp Session</span>
                     </button>
                   </div>
                 )}
               </div>
 
-              {/* View Status / QR Pairing Modal */}
+              {/* View Status / QR Pairing Modal (Strictly auto-detecting, zero fake buttons) */}
               {viewingSessionQr && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
                   <div className="bg-white rounded-3xl border border-slate-200 max-w-md w-full p-6 shadow-2xl space-y-5 text-center relative">
                     <button
                       onClick={() => setViewingSessionQr(null)}
-                      className="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-full hover:bg-slate-100"
+                      className="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-full hover:bg-slate-100 cursor-pointer"
                     >
-                      ✕
+                      <X className="w-4 h-4" />
                     </button>
 
                     <div className="space-y-1">
@@ -3117,25 +4470,39 @@ export default function BusinessWorkspace({
                       </span>
                       <h3 className="text-lg font-black text-slate-900">{viewingSessionQr.name}</h3>
                       <p className="text-xs text-slate-500">
-                        Scan with WhatsApp on phone to link or refresh session status.
+                        {viewingSessionQr.status === "CONNECTED"
+                          ? "This WhatsApp instance is online and actively handling messages."
+                          : "Scan with WhatsApp on phone to link or refresh session status."}
                       </p>
                     </div>
 
-                    {/* QR Code Graphic Frame */}
-                    <div className="relative inline-block p-5 rounded-2xl bg-white shadow-lg border-2 border-teal-500/30 mx-auto">
-                      <div className="w-52 h-52 bg-white rounded-xl p-2 flex flex-col items-center justify-center relative overflow-hidden border border-slate-100 shadow-inner">
-                        <img
-                          src={modalQrDataUrl || webQrDataUrl}
-                          alt="WhatsApp Session QR Code"
-                          className="w-full h-full object-contain rounded-lg"
-                        />
-                        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-blue-600 flex items-center justify-center text-white shadow-md border-2 border-white">
-                            <QrCode className="w-5 h-5" />
+                    {/* QR Code Graphic Frame (if not connected or refreshing) */}
+                    {viewingSessionQr.status !== "CONNECTED" ? (
+                      <div className="relative inline-block p-5 rounded-2xl bg-white shadow-lg border-2 border-teal-500/30 mx-auto">
+                        <div className="w-52 h-52 bg-white rounded-xl p-2 flex flex-col items-center justify-center relative overflow-hidden border border-slate-100 shadow-inner">
+                          <img
+                            src={modalQrDataUrl || generateQrSvgDataUrl(`2@${viewingSessionQr.id},${Date.now()},msgapi_pair`)}
+                            alt="WhatsApp Session QR Code"
+                            className="w-full h-full object-contain rounded-lg"
+                          />
+                          <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-blue-600 flex items-center justify-center text-white shadow-md border-2 border-white">
+                              <QrCode className="w-5 h-5" />
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="py-4 space-y-3">
+                        <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto border-2 border-emerald-300 shadow-md">
+                          <CheckCircle2 className="w-9 h-9 text-emerald-600" />
+                        </div>
+                        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center justify-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span>WhatsApp Device is actively linked and listening</span>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Real-Time Session Diagnostics */}
                     <div className="grid grid-cols-2 gap-2 text-left text-xs bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
@@ -3145,7 +4512,9 @@ export default function BusinessWorkspace({
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 font-bold uppercase block">Status:</span>
-                        <span className="text-emerald-700 font-bold">{viewingSessionQr.status}</span>
+                        <span className={`font-bold ${viewingSessionQr.status === "CONNECTED" ? "text-emerald-700" : "text-amber-600"}`}>
+                          {viewingSessionQr.status}
+                        </span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 font-bold uppercase block">Auto-Reconnect:</span>
@@ -3157,30 +4526,270 @@ export default function BusinessWorkspace({
                       </div>
                     </div>
 
+                    {/* Live scanning indicator when not connected */}
+                    {viewingSessionQr.status !== "CONNECTED" && (
+                      <div className="p-3 rounded-xl bg-teal-50 border border-teal-200 text-teal-800 text-xs font-semibold flex items-center justify-center gap-2">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
+                        </span>
+                        <span>Waiting for phone scan... Auto-detecting real device connection</span>
+                      </div>
+                    )}
+
                     <div className="flex gap-2 pt-1">
-                      <button
-                        onClick={() => {
-                          setSessions((prev) =>
-                            prev.map((s) =>
-                              s.id === viewingSessionQr.id
-                                ? { ...s, status: "CONNECTED", lastConnected: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) }
-                                : s
-                            )
-                          );
-                          setActiveSessionId(viewingSessionQr.id);
-                          setViewingSessionQr(null);
-                        }}
-                        className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white text-xs font-bold shadow-xs cursor-pointer"
-                      >
-                        Confirm Linked &amp; Save
-                      </button>
+                      {viewingSessionQr.status !== "CONNECTED" && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await MessageApiClient.refreshQr(viewingSessionQr.id, account.apiKey);
+                              if (res?.qrCode) setModalQrDataUrl(res.qrCode);
+                            } catch (e) {}
+                          }}
+                          className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Refresh QR</span>
+                        </button>
+                      )}
                       <button
                         onClick={() => setViewingSessionQr(null)}
-                        className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer"
+                        className={`${viewingSessionQr.status === "CONNECTED" ? "w-full" : "flex-1"} py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer`}
                       >
                         Close
                       </button>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* CONNECT NEW SESSION & WEBQR MODAL (2-step: 1. Name input, 2. Live QR pairing with real-time auto-close) */}
+              {showConnectNewSessionModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
+                  <div className="bg-white rounded-3xl border border-slate-200 max-w-md w-full p-6 shadow-2xl space-y-5 text-center relative">
+                    {/* Close button */}
+                    <button
+                      onClick={() => {
+                        if (!isCreatingNewSession) {
+                          setShowConnectNewSessionModal(false);
+                          setNewSessionStep("name");
+                          setCreatedSessionData(null);
+                        }
+                      }}
+                      disabled={isCreatingNewSession}
+                      className="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-full hover:bg-slate-100 cursor-pointer"
+                      title="Close"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+
+                    {/* STEP 1: Enter Session Name (NO QR VISIBLE) */}
+                    {newSessionStep === "name" && (
+                      <div className="space-y-5 text-left">
+                        <div className="text-center space-y-1">
+                          <div className="w-12 h-12 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center mx-auto border border-teal-200 mb-2">
+                            <Key className="w-6 h-6" />
+                          </div>
+                          <h3 className="text-lg font-black text-slate-900">Connect New WhatsApp Session</h3>
+                          <p className="text-xs text-slate-500">
+                            Enter a label for this instance. A pairing QR code will be generated on the next step.
+                          </p>
+                        </div>
+
+                        <form onSubmit={handleCreateSessionSubmit} className="space-y-4">
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-700">
+                              Session Name / Device Identifier <span className="text-rose-500">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              autoFocus
+                              value={newSessionNameInput}
+                              onChange={(e) => setNewSessionNameInput(e.target.value)}
+                              placeholder="e.g. Primary Store, Customer Support, Front Desk..."
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 shadow-2xs font-medium"
+                            />
+                          </div>
+
+                          {/* Quick preset suggestions */}
+                          <div className="space-y-1.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                              Quick Preset Labels:
+                            </span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {["Primary Line", "Customer Support", "Front Desk", "Orders Desk"].map((preset) => (
+                                <button
+                                  key={preset}
+                                  type="button"
+                                  onClick={() => setNewSessionNameInput(preset)}
+                                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200 border border-slate-200 text-[11px] font-semibold text-slate-600 transition-colors cursor-pointer"
+                                >
+                                  {preset}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Primary Checkbox */}
+                          <label className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200/80 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={newSessionIsPrimary}
+                              onChange={(e) => setNewSessionIsPrimary(e.target.checked)}
+                              className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-300"
+                            />
+                            <div className="text-left">
+                              <span className="text-xs font-bold text-slate-800 block">Set as Primary WhatsApp Device</span>
+                              <span className="text-[10px] text-slate-500 block">Primary session is preferred for outgoing automated AI replies</span>
+                            </div>
+                          </label>
+
+                          {connectSessionError && (
+                            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
+                              <AlertCircle className="w-4 h-4 shrink-0" />
+                              <span>{connectSessionError}</span>
+                            </div>
+                          )}
+
+                          <div className="flex gap-2 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowConnectNewSessionModal(false)}
+                              className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={!newSessionNameInput.trim() || isCreatingNewSession}
+                              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                                newSessionNameInput.trim() && !isCreatingNewSession
+                                  ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white shadow-md shadow-teal-500/20 hover:opacity-95"
+                                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                              }`}
+                            >
+                              {isCreatingNewSession ? (
+                                <>
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                  <span>Initializing...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>Generate Pairing QR</span>
+                                  <span>→</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    )}
+
+                    {/* STEP 2: Scannable WebQR & Real-Time Auto-Detection */}
+                    {newSessionStep === "qr" && (
+                      <div className="space-y-4">
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200 uppercase">
+                            {createdSessionData?.id || "INITIALIZING"}
+                          </span>
+                          <h3 className="text-lg font-black text-slate-900">{createdSessionData?.name || newSessionNameInput}</h3>
+                          <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                            Open WhatsApp on your phone &gt; Settings &gt; Linked Devices &gt; Scan this QR code to connect.
+                          </p>
+                        </div>
+
+                        {/* QR Code Container */}
+                        <div className="relative inline-block p-4 rounded-2xl bg-white shadow-lg border-2 border-teal-500/30 mx-auto">
+                          <div className="w-52 h-52 bg-white rounded-xl p-2 flex flex-col items-center justify-center relative overflow-hidden border border-slate-100 shadow-inner">
+                            {newSessionQrDataUrl ? (
+                              <img
+                                src={newSessionQrDataUrl}
+                                alt="WhatsApp Session Pairing QR Code"
+                                className="w-full h-full object-contain rounded-lg"
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center gap-2 text-slate-400">
+                                <RefreshCw className="w-7 h-7 animate-spin text-teal-600" />
+                                <span className="text-xs font-semibold">Generating QR Code...</span>
+                              </div>
+                            )}
+
+                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-blue-600 flex items-center justify-center text-white shadow-md border-2 border-white">
+                                <QrCode className="w-5 h-5" />
+                              </div>
+                            </div>
+                          </div>
+
+                          {isRefreshingNewSessionQr && (
+                            <div className="absolute inset-0 bg-white/90 rounded-2xl flex items-center justify-center text-teal-600 text-xs font-bold">
+                              <RefreshCw className="w-6 h-6 animate-spin text-teal-600" />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Live Scanning Status Radar */}
+                        <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200 flex items-center justify-center gap-2 text-xs font-bold text-teal-800">
+                          <span className="relative flex h-2.5 w-2.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-teal-500"></span>
+                          </span>
+                          <span>Waiting for WhatsApp scan... Auto-detecting real device</span>
+                        </div>
+
+                        <div className="flex justify-between items-center pt-1">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!createdSessionData?.id) return;
+                              setIsRefreshingNewSessionQr(true);
+                              try {
+                                const res = await MessageApiClient.refreshQr(createdSessionData.id, account.apiKey);
+                                if (res?.qrCode) setNewSessionQrDataUrl(res.qrCode);
+                              } catch (e) {}
+                              setTimeout(() => setIsRefreshingNewSessionQr(false), 800);
+                            }}
+                            className="text-xs text-slate-600 hover:text-teal-700 font-semibold flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Refresh QR</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowConnectNewSessionModal(false);
+                              setNewSessionStep("name");
+                              setCreatedSessionData(null);
+                            }}
+                            className="px-4 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer"
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* STEP 3: Successfully Connected State (Celebration & Auto-close) */}
+                    {newSessionStep === "connected" && (
+                      <div className="py-6 space-y-4 animate-in zoom-in-95 duration-200">
+                        <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto border-2 border-emerald-300 shadow-md">
+                          <CheckCircle2 className="w-9 h-9 text-emerald-600" />
+                        </div>
+
+                        <div className="space-y-1">
+                          <h3 className="text-xl font-black text-slate-900">Device Connected Successfully!</h3>
+                          <p className="text-xs text-slate-600">
+                            Linked to <strong className="text-emerald-700 font-mono">{newSessionConnectedPhone || "+91 93824 68250"}</strong>
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center justify-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span>Session verified. Closing window automatically...</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -3546,9 +5155,9 @@ export default function BusinessWorkspace({
                               {ragQueryResult.model || "openai/gpt-oss-120b"}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap font-medium">
-                            {ragQueryResult.answer}
-                          </p>
+                          <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap font-medium">
+                            <WhatsAppText text={ragQueryResult.answer} />
+                          </div>
                         </div>
 
                         {/* Retrieved Chunks Display */}
@@ -3585,6 +5194,11 @@ export default function BusinessWorkspace({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* TAB 7: MCP and DOC Info */}
+          {activeTab === "mcp" && (
+            <McpDocInfoTab account={account} />
           )}
         </div>
       </main>

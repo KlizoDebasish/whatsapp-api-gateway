@@ -73,4 +73,31 @@ export class CatalogController {
       next(err);
     }
   }
+
+  public static async uploadCatalogPdf(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.business?.id;
+      if (!businessId) {
+        res.status(400).json({ success: false, error: 'Business account required' });
+        return;
+      }
+
+      const { fileName, content, defaultCategory } = req.body;
+      if (!fileName || !content) {
+        res.status(400).json({ success: false, error: 'fileName and content (base64) are required' });
+        return;
+      }
+
+      const result = await CatalogService.uploadAndParsePdf({
+        businessId,
+        fileName,
+        base64Content: content,
+        defaultCategory
+      });
+
+      res.status(201).json(result);
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message || 'Failed to parse and import catalog PDF' });
+    }
+  }
 }

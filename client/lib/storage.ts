@@ -277,6 +277,141 @@ export function deleteBusinessAccount(id: string): void {
   }
 }
 
+export interface SimulatedReplyResult {
+  text: string;
+  mediaUrl?: string;
+  messageType?: "text" | "image" | "document";
+}
+
+const CATEGORY_VISUALS: Record<string, {
+  label: string;
+  keywords: string[];
+  suggestions: string[];
+  promptEnhancer: (subject: string, biz: string) => string;
+}> = {
+  gym: {
+    label: "Fitness & Gym",
+    keywords: [
+      "gym", "fitness", "workout", "dumbbell", "barbell", "weights", "equipment", 
+      "treadmill", "bench press", "squat", "crossfit", "muscle", "bodybuilder", 
+      "bodybuilding", "trainer", "training", "supplement", "whey", "protein", 
+      "creatine", "exercise", "cardio", "gym interior", "gym poster", "studio", 
+      "bicep", "pullup", "gym floor", "locker room", "transformation", "kettlebell", 
+      "leg press", "smith machine", "diet", "nutrition", "rower", "athlete"
+    ],
+    suggestions: [
+      "Heavy dumbbell rack & Olympic barbell workout zone",
+      "Modern crossfit studio floor with cardio machines",
+      "Whey protein tub & fitness supplement display",
+      "High-energy personal trainer workout poster"
+    ],
+    promptEnhancer: (s) =>
+      `Cinematic commercial photography of ${s}, modern premium fitness gym background, dramatic studio rim lighting, 4k ultra detailed, hyperrealistic, athletic aesthetic, sharp focus, 1024x1024, advertising poster quality`
+  },
+  medicine: {
+    label: "Pharmacy & Healthcare",
+    keywords: [
+      "medicine", "pharma", "pharmacy", "drug", "pill", "capsule", "tablet", "syrup", 
+      "prescription", "doctor", "healthcare", "clinic", "first aid", "bandage", 
+      "thermometer", "stethoscope", "vitamin", "ointment", "medical", "hospital", 
+      "shelf", "counter", "dispensing", "mask", "syringes", "wellness", "supplement", 
+      "inhaler", "glucometer", "bp monitor", "sanitizer", "lab"
+    ],
+    suggestions: [
+      "Organized pharmacy medicine shelves & counter setup",
+      "First aid kit & essential healthcare supplies display",
+      "Daily multivitamin & health supplement bottles",
+      "Clinical pharmacy storefront with licensed dispensing desk"
+    ],
+    promptEnhancer: (s) =>
+      `Professional clean studio photo of ${s}, licensed pharmacy and healthcare clinic background, soft clinical lighting, 4k ultra detailed, hyperrealistic, sharp focus, 1024x1024, medical commercial standard`
+  },
+  grocery: {
+    label: "Supermarket & Express Grocery",
+    keywords: [
+      "grocery", "supermarket", "fruit", "vegetable", "produce", "apple", "banana", 
+      "milk", "dairy", "bread", "bakery", "cereal", "flour", "rice", "dal", "grain", 
+      "snack", "basket", "cart", "store aisle", "fresh", "organic", "spices", "butter", 
+      "cheese", "eggs", "oil", "pantry", "vegetables", "fruits", "mart", "farm"
+    ],
+    suggestions: [
+      "Fresh organic fruits & vegetables in a wooden market crate",
+      "Neatly organized modern supermarket grocery aisles",
+      "Warm artisanal bakery bread & fresh dairy morning basket",
+      "Assorted grains, spices & daily pantry staples showcase"
+    ],
+    promptEnhancer: (s) =>
+      `Vibrant commercial food photography of fresh ${s}, supermarket grocery setting, bright natural morning lighting, 4k ultra detailed, hyperrealistic, fresh and appetizing, 1024x1024`
+  },
+  electronics: {
+    label: "Consumer Electronics & Tech",
+    keywords: [
+      "electronics", "gadget", "phone", "smartphone", "laptop", "computer", "monitor", 
+      "display", "headphone", "audio", "speaker", "charger", "cable", "gaming", 
+      "console", "smartwatch", "tech", "device", "camera", "tablet", "keyboard", 
+      "mouse", "gpu", "processor", "airpods", "earbuds", "tv"
+    ],
+    suggestions: [
+      "Flagship smartphone with futuristic titanium camera array",
+      "Pro gaming battle station desk with RGB mechanical keyboard",
+      "Premium wireless noise-canceling headphones & audio station",
+      "Ultra-slim workstation laptop with 4K bezel-less display"
+    ],
+    promptEnhancer: (s) =>
+      `High-end product photography of ${s}, sleek tech showroom setting, neon cyber accent lighting, 4k ultra detailed, hyperrealistic, modern tech aesthetic, 1024x1024`
+  },
+  restaurant: {
+    label: "Restaurant & Culinary Kitchen",
+    keywords: [
+      "restaurant", "food", "dish", "meal", "biryani", "starter", "curry", "pizza", 
+      "burger", "chef", "kitchen", "dining", "menu", "beverage", "shake", "coffee", 
+      "dessert", "plate", "table", "culinary", "appetizer", "pasta", "sandwich", 
+      "drink", "cocktail", "mocktail", "paneer", "chicken", "salad", "roast", "bake"
+    ],
+    suggestions: [
+      "Signature royal chef special biryani platter with rich spices",
+      "Sizzling gourmet appetizer platter with artisan dips",
+      "Craft barista espresso & decadent chocolate dessert plate",
+      "Ambient fine-dining restaurant candlelit dinner table"
+    ],
+    promptEnhancer: (s) =>
+      `Mouth-watering gourmet food photography of ${s}, restaurant dining presentation, warm atmospheric lighting, subtle rising steam, shallow depth of field, 4k ultra detailed, hyperrealistic, 1024x1024`
+  },
+  salon: {
+    label: "Salon, Spa & Beauty Lounge",
+    keywords: [
+      "salon", "spa", "hair", "haircut", "styling", "facial", "massage", "beauty", 
+      "skincare", "manicure", "pedicure", "grooming", "makeup", "lounge", "chair", 
+      "mirror", "serum", "keratin", "glow", "barber", "shampoo", "cream", "lotion", 
+      "eyebrows", "cosmetics", "facials"
+    ],
+    suggestions: [
+      "Luxury modern salon hair styling station with vanity mirrors",
+      "Tranquil wellness spa aromatherapy massage suite with lotus petals",
+      "Professional hair makeover styling & grooming setup",
+      "Organic botanical facial & skincare beauty treatment kit"
+    ],
+    promptEnhancer: (s) =>
+      `Luxury beauty commercial photography of ${s}, modern elegant salon and spa background, warm glamorous lighting, 4k ultra detailed, hyperrealistic, sharp focus, 1024x1024`
+  },
+  custom: {
+    label: "Enterprise Business & Commerce",
+    keywords: [
+      "business", "office", "workspace", "product", "service", "consultation", 
+      "desk", "team", "meeting", "company", "store", "catalog", "corporate", 
+      "commercial", "suite", "headquarters", "brand"
+    ],
+    suggestions: [
+      "Executive corporate business consultation suite",
+      "Premium branded product & showcase presentation",
+      "Modern creative enterprise conference & innovation hub",
+      "Professional client service welcome desk"
+    ],
+    promptEnhancer: (s) =>
+      `Corporate commercial photography of ${s}, modern architectural business headquarters background, clean executive lighting, 4k ultra detailed, hyperrealistic, 1024x1024`
+  }
+};
+
 /**
  * Intelligent local response generator simulating the WhatsApp Gateway ERP Assistant
  */
@@ -287,54 +422,198 @@ export function generateSimulatedReply(
   const q = userMessage.toLowerCase().trim();
   const curr = account.currency || "₹";
 
-  // Check for greetings
-  if (/\b(hi|hello|hey|namaste|hlo|good morning|good evening)\b/i.test(q)) {
-    return account.greetingMessage.replace("{BusinessName}", account.businessName);
-  }
+  const generateReply = (): string => {
+    // 1. PDF / Document Generation Intent
+    if (/\b(pdf|document|catalog pdf|catalogue pdf|price list pdf|rate card pdf|brochure)\b/i.test(q) &&
+      /\b(generate|create|send|download|give|share|export|make|view|get)\b/i.test(q)) {
+      const distinctCats = Array.from(new Set(account.catalog?.map((c) => c.category?.trim()).filter(Boolean) || []));
+      const catList = distinctCats.length > 0 ? distinctCats.map((c) => `• *${c}*`).join("\n") : "• *Full Store Product Catalog*";
+      return `📄 *Digital Catalog PDF for ${account.businessName}:*\n\nHere are the catalog categories available for document export:\n${catList}\n\nYou can also export or view the itemized PDF catalog from the store dashboard anytime! Would you like details on any specific category?`;
+    }
 
-  // Check for working hours / timing
-  if (/\b(time|timing|timings|open|close|hours|schedule)\b/i.test(q)) {
-    return `🕒 *Operating Hours for ${account.businessName}:*\nWe are open *${account.workingHours}*.\nHow can we help you today?`;
-  }
+    // 2. Image Generation Intent
+    const imageKeywords = /\b(image|photo|picture|pic|poster|banner|wallpaper|graphic|visual|drawing|illustration|sketch)\b/i;
+    const commandVerbs = /\b(generate|create|draw|make|render|design|show me|give me|produce|paint)\b/i;
+    const isImageIntent = (commandVerbs.test(q) && imageKeywords.test(q)) ||
+      /\b(generate|create|draw|make|show me an?|picture of|photo of|image of)\s+([a-z0-9\s]+)\s+(image|photo|picture|pic|poster|banner)/i.test(q) ||
+      /\b(generate|create|draw|make)\s+(an?\s+)?(image|photo|picture|pic|poster|banner)/i.test(q) ||
+      /^(please\s+)?(generate|create|draw|make)\s+(an?\s+)?image/i.test(q) ||
+      /\b(image|photo|picture)\s*[:=]/i.test(q);
 
-  // Check for location / address
-  if (/\b(address|location|where|map|shop location)\b/i.test(q)) {
-    return `📍 *Our Store Location:*\n${account.businessName}\n${account.address || "Main Market Road"}\n📞 Phone: ${account.phone}`;
-  }
+    if (isImageIntent) {
+      const catKey = (account.category || "custom").toLowerCase();
+      const profile = CATEGORY_VISUALS[catKey] || CATEGORY_VISUALS.custom;
+      let subject = q
+        .replace(/^(hey|hi|hello|heya|hlo|dear|ok|okay)[,\s]+/i, "")
+        .replace(/^(can you|could you|would you|will you|i want you to|i would like you to|i need you to|help me|tell me to)[,\s]+/i, "")
+        .replace(/^(please|kindly)[,\s]+/i, "")
+        .replace(/^(generate|create|draw|make|render|design|show me|give me|produce|paint|get me)\s+(me\s+)?(an?\s+)?/i, "")
+        .replace(/^(image|photo|picture|pic|poster|banner|visual|graphic|wallpaper|drawing)\s*(of|for|about|:)?\s*/i, "")
+        .replace(/\s+(image|photo|picture|pic|poster|banner|wallpaper|graphic|drawing)$/i, "")
+        .replace(/^(an?\s+)/i, "")
+        .replace(/[:=?!.,]+$/g, "").trim();
 
-  // Search in catalog
-  const catalog = account.catalog || [];
-  const matchedItem = catalog.find((item) =>
-    q.includes(item.name.toLowerCase()) ||
-    q.includes(item.sku.toLowerCase()) ||
-    (item.category && q.includes(item.category.toLowerCase())) ||
-    item.name.toLowerCase().split(" ").some((w) => w.length >= 4 && q.includes(w))
-  );
+      const lowerSub = subject.toLowerCase().trim();
+      const isVague =
+        !lowerSub ||
+        lowerSub.length < 2 ||
+        ["image", "photo", "picture", "pic", "poster", "banner", "something", "a picture", "an image", "visual", "graphic", "wallpaper", "drawing"].includes(lowerSub);
 
-  if (matchedItem) {
-    const stockStatus = matchedItem.stock > 0 ? `✅ In Stock (*${matchedItem.stock} ${matchedItem.unit}* available)` : `⚠️ Currently Out of Stock`;
-    return `📦 *${matchedItem.name}* (\`${matchedItem.sku}\`)\n• Category: *${matchedItem.category}*\n• Price: *${curr}${matchedItem.price.toFixed(2)}*\n• Availability: ${stockStatus}\n• Details: ${matchedItem.description || "Fresh stock"}\n\nWould you like to place an order? Please reply with the quantity!`;
-  }
+      if (isVague) {
+        const suggestionsText = profile.suggestions.map((s) => `• ${s}`).join("\n");
+        return `I'd love to generate an image for you! 🎨 Could you please clarify which specific ${profile.label} image you would like to create?\n\nHere are some popular options you can choose from:\n${suggestionsText}\n\nSimply reply with your idea or tell me which one you'd like to see!`;
+      }
 
-  // Check for all products / catalog list
-  if (/\b(menu|catalog|list|all products|price list|services|items)\b/i.test(q)) {
-    const itemsList = catalog
-      .slice(0, 5)
-      .map((item, idx) => `${idx + 1}. *${item.name}* - ${curr}${item.price.toFixed(2)} (${item.stock > 0 ? "In Stock" : "Out of stock"})`)
-      .join("\n");
-    return `📋 *Featured Catalog at ${account.businessName}:*\n${itemsList}\n\nReply with any product name to get complete details or order!`;
-  }
+      const stopWords = new Set([
+        "hey", "hello", "please", "can", "you", "want", "need", "give", "show", "make",
+        "generate", "create", "image", "photo", "picture", "pic", "for", "the", "and",
+        "with", "like", "good", "best", "some", "any", "pro", "max", "new", "one", "two",
+        "all", "about", "draw", "have", "see", "this", "that", "our"
+      ]);
 
-  // Check for human agent / call
-  if (/\b(call|agent|human|talk|speak|owner)\b/i.test(q)) {
-    return `📞 Connecting you with our store manager, *${account.ownerName}*. You can reach us directly at *${account.phone}*.`;
-  }
+      let matchesKeyword = false;
+      for (const kw of profile.keywords) {
+        const lowerKw = kw.toLowerCase();
+        if (lowerSub === lowerKw || lowerSub.includes(lowerKw)) {
+          matchesKeyword = true;
+          break;
+        }
+      }
 
-  // Check for order placement
-  if (/\b(order|buy|book|need|want|purchase)\b/i.test(q)) {
-    return `🛍️ *Order Request Received!*\nWe have noted your interest. Please provide your *Delivery Address* or preferred pickup time to confirm your order.`;
-  }
+      if (!matchesKeyword) {
+        const subjectWords = lowerSub.split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !stopWords.has(w));
+        for (const word of subjectWords) {
+          for (const kw of profile.keywords) {
+            const lowerKw = kw.toLowerCase();
+            if (lowerKw === word || lowerKw.split(/\s+/).includes(word)) {
+              matchesKeyword = true;
+              break;
+            }
+          }
+          if (matchesKeyword) break;
+        }
+      }
 
-  // Generic natural response
-  return `Thank you for contacting *${account.businessName}*! 👋\nWe have received your query: "${userMessage}". Our automated assistant or store team is available *${account.workingHours}* to assist you. Ask for any product or service!`;
+      const matchesCatalog = (account.catalog || []).some((item) => {
+        const n = item.name.toLowerCase();
+        const c = (item.category || "").toLowerCase();
+        return lowerSub.includes(n) || (n.length >= 4 && lowerSub.includes(n)) || (c && lowerSub.includes(c));
+      });
+
+      if (!matchesKeyword && !matchesCatalog) {
+        const suggestionsText = profile.suggestions.map((s) => `• ${s}`).join("\n");
+        const cleanSubName = subject
+          .split(" ")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+
+        return `I specialize exclusively in ${profile.label} visuals for ${account.businessName}! 🎨 I'm unable to create images of '${cleanSubName}', as I only provide images related to our ${profile.label} services.\n\nHere are some relevant images I can generate for you right now:\n${suggestionsText}\n\nWould you like me to generate one of these for you instead?`;
+      }
+
+      const capitalizedSubject = subject.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+      const enhancedPrompt = profile.promptEnhancer(subject, account.businessName);
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=1024&height=1024&nologo=true&enhance=true`;
+
+      return `Here is your image of *${capitalizedSubject}*! 🎨\n\n[IMAGE_URL:${pollinationsUrl}]\n\n*Created exclusively for ${account.businessName}.*\n\nI hope you like it! Can I ask how else I can help you today? 😊`;
+    }
+
+    // Check for greetings
+    if (/\b(hi|hello|hey|namaste|hlo|heya|hola|good morning|good evening)\b/i.test(q)) {
+      return (account.greetingMessage || "Hello! Welcome to {BusinessName}!").replace(/{BusinessName}/g, account.businessName);
+    }
+
+    // Check for working hours / timing
+    if (/\b(time|timing|timings|open|close|hours|schedule|operating hours)\b/i.test(q)) {
+      return `🕒 *Operating Hours for ${account.businessName}:*\nWe are open *${account.workingHours}*.\nFeel free to ask any other questions!`;
+    }
+
+    // Check for location / address
+    if (/\b(address|location|where|map|shop location|store location)\b/i.test(q)) {
+      return `📍 *Store Location:* ${account.businessName}\n${account.address || "Main Market Road"}\n📞 Front Desk: *${account.phone}*`;
+    }
+
+    const isStockQuery = /\b(stock|stocks|inventory|available|availability|units left|in stock|stock details|items available|how many|units left|qty|quantity|left in stock|how much stock|catalog|products|items|menu|list|options)\b/i.test(q);
+
+    // Search in catalog
+    const catalog = account.catalog || [];
+    const distinctCategories = Array.from(
+      new Set(catalog.map((i) => i.category?.trim()).filter(Boolean))
+    );
+
+    const matchedCategory = distinctCategories.find((cat) => {
+      const c = cat.toLowerCase();
+      return q === c || q.includes(c) || c.split(/\s+/).some((w) => w.length >= 4 && q.includes(w));
+    });
+
+    const matchedItem = catalog.find((item) =>
+      q.includes(item.name.toLowerCase()) ||
+      q.includes(item.sku.toLowerCase()) ||
+      item.name.toLowerCase().split(" ").some((w) => w.length >= 4 && q.includes(w))
+    );
+
+    // Stock query flow
+    if (isStockQuery || matchedCategory) {
+      if (!matchedCategory && !matchedItem) {
+        if (catalog.length === 0) {
+          return `Currently, no stock is available now.. we will update soon! Please feel free to ask about our timings or contact our front desk at *${account.phone}*.`;
+        }
+        const catList = distinctCategories.map((c) => `• *${c}*`).join('\n');
+        return `Hello! We have live inventory available across several categories at *${account.businessName}*:\n\n${catList}\n\nWhich category would you like to check stock details for? Simply reply with the category name!`;
+      }
+
+      if (matchedCategory) {
+        const catItems = catalog.filter(
+          (i) => i.category.toLowerCase() === matchedCategory.toLowerCase() ||
+                 i.category.toLowerCase().includes(matchedCategory.toLowerCase()) ||
+                 matchedCategory.toLowerCase().includes(i.category.toLowerCase())
+        );
+        const inStockItems = catItems.filter((i) => i.stock > 0);
+        if (catItems.length === 0 || inStockItems.length === 0) {
+          return `Currently, no stock is available in *${matchedCategory}*.. we will update soon! Please let us know if you would like to explore our other categories or check back shortly.`;
+        }
+        const top4to5 = inStockItems.slice(0, 5);
+        const productListText = top4to5.map((item, idx) => {
+          return `${idx + 1}. *${item.name}* (\`${item.sku}\`)\n   • Price: *${curr}${item.price.toFixed(2)}*${item.unit && item.unit !== 'pcs' ? ` / ${item.unit}` : ''}\n   • Stock: *${item.stock} ${item.unit} available* (✅ In Stock)${item.description ? `\n   • Info: ${item.description}` : ''}`;
+        }).join('\n\n');
+
+        return `📦 *Live Stock Details for ${matchedCategory} at ${account.businessName}:*\n\n${productListText}\n\nWould you like to place an order or check details for another category?`;
+      }
+
+      if (matchedItem) {
+        if (matchedItem.stock > 0) {
+          return `✅ *${matchedItem.name}* (\`${matchedItem.sku}\`) is in stock!\n• Category: *${matchedItem.category}*\n• Price: *${curr}${matchedItem.price.toFixed(2)}*${matchedItem.unit && itemUnit(matchedItem.unit)}\n• Available Stock: *${matchedItem.stock} ${matchedItem.unit}*\n${matchedItem.description ? `• Details: ${matchedItem.description}\n` : ''}Would you like to place an order? Please reply with your desired quantity to proceed!`;
+        }
+        return `⚠️ *${matchedItem.name}* (\`${matchedItem.sku}\`) is currently out of stock.. we will update soon! Would you like us to notify you when it arrives?`;
+      }
+
+      return `We could not find that item in our current inventory at *${account.businessName}*. No stock is available now.. we will update soon! Please feel free to check our other categories or reach our team at *${account.phone}*.`;
+    }
+
+    function itemUnit(unit?: string) {
+      return unit && unit !== 'pcs' ? ` / ${unit}` : '';
+    }
+
+    // Non-stock query: product description without stock count
+    if (matchedItem) {
+      return `📦 *${matchedItem.name}*\n• Price: *${curr}${matchedItem.price.toFixed(2)}*${itemUnit(matchedItem.unit)}\n${matchedItem.description ? `• Details: ${matchedItem.description}\n` : ''}Would you like more details or help getting started?`;
+    }
+
+    // Check for human agent / call
+    if (/\b(call|agent|human|talk|speak|owner)\b/i.test(q)) {
+      return `📞 Connecting you with our team desk for *${account.businessName}*. You can reach us directly at *${account.phone}*.`;
+    }
+
+    // Check for order placement
+    if (/\b(order|buy|book|need|want|purchase)\b/i.test(q)) {
+      return `🛍️ *Request Received!*\nWe have noted your interest. Please provide your contact number and preferred details to proceed.`;
+    }
+
+    // Generic natural response matching AI persona (no unprompted stock mentions)
+    const welcome = account.greetingMessage 
+      ? account.greetingMessage.replace(/{BusinessName}/g, account.businessName)
+      : `Thank you for contacting *${account.businessName}*! 👋`;
+    return `${welcome}\n\nHow can I assist you with our services, pricing, or timings today?`;
+  };
+
+  return generateReply().replace(/\*\*(.*?)\*\*/g, "*$1*").trim();
 }

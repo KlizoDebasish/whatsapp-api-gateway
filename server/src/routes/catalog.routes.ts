@@ -9,6 +9,7 @@ router.use(authMiddleware);
 // Get live catalog & bulk create/update
 router.get('/', CatalogController.getCatalog);
 router.post('/', CatalogController.createCatalog);
+router.post('/upload-pdf', CatalogController.uploadCatalogPdf);
 
 // Single item modifications
 router.put('/:id', CatalogController.updateItem);

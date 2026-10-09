@@ -201,7 +201,7 @@ export default function BusinessNicheShowcase({ onOpenWizard }: NicheShowcasePro
           </h2>
 
           <p className="text-sm sm:text-base text-slate-600 font-medium max-w-3xl mx-auto leading-relaxed">
-            MessageAPI is engineered to work universally. Whether you sell physical goods, offer professional services, run a local shop, manage an e-commerce store, or build software — our platform makes your customer engagement smooth, automated, and user-friendly.
+            MsgNexa is engineered to work universally. Whether you sell physical goods, offer professional services, run a local shop, manage an e-commerce store, or build software — our platform makes your customer engagement smooth, automated, and user-friendly.
           </p>
         </div>
 
@@ -248,7 +248,7 @@ export default function BusinessNicheShowcase({ onOpenWizard }: NicheShowcasePro
               {/* Core Workflows */}
               <div className="space-y-3">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  How MessageAPI Powers This Workflow:
+                  How MsgNexa Powers This Workflow:
                 </p>
 
                 <div className="space-y-2 text-xs">
@@ -284,12 +284,12 @@ export default function BusinessNicheShowcase({ onOpenWizard }: NicheShowcasePro
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-white truncate max-w-[200px]">{currentCategory.title}</h4>
-                    <p className="text-[10px] text-emerald-400 font-medium">MessageAPI Autonomous Engine • Online</p>
+                    <p className="text-[10px] text-emerald-400 font-medium">MsgNexa Autonomous Engine • Online</p>
                   </div>
                 </div>
 
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-[5px] bg-slate-800 text-emerald-400 border border-slate-700 font-bold">
-                  MessageAPI Verified
+                  MsgNexa Verified
                 </span>
               </div>
 
@@ -308,7 +308,7 @@ export default function BusinessNicheShowcase({ onOpenWizard }: NicheShowcasePro
                   <div className="bg-slate-800 text-slate-100 p-4 rounded-2xl rounded-tl-xs max-w-[90%] border border-slate-700 shadow-md space-y-2">
                     <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold">
                       <Bot className="w-3.5 h-3.5" />
-                      <span>MessageAPI Assistant</span>
+                      <span>MsgNexa Assistant</span>
                     </div>
                     <p className="whitespace-pre-line leading-relaxed text-slate-200">
                       {currentCategory.sampleBot}

@@ -27,14 +27,14 @@ export default function ValueProposition({ onOpenWizard }: ValueProps) {
             <span>The Reality & Core Value</span>
           </div>
           <h2 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight">
-            Why Modern Businesses Are Switching to MessageAPI
+            Why Modern Businesses Are Switching to MsgNexa API
           </h2>
           <p className="text-sm sm:text-base text-slate-600">
-            Traditional WhatsApp Business APIs charge exorbitant fees per conversation and lock you in rigid template approvals. MessageAPI gives you complete freedom, zero bills, and true AI intelligence.
+            Traditional WhatsApp Business APIs charge exorbitant fees per conversation and lock you in rigid template approvals. MsgNexa API gives you complete freedom, zero bills, and true AI intelligence.
           </p>
         </div>
 
-        {/* Comparison Table / Cards: Official Cloud API vs MessageAPI */}
+        {/* Comparison Table / Cards: Official Cloud API vs MsgNexa API */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
           {/* Left: Traditional Official Cloud API (The Pain) */}
           <div className="bg-rose-50/50 rounded-3xl border border-rose-200 p-8 space-y-6 flex flex-col justify-between">
@@ -75,7 +75,7 @@ export default function ValueProposition({ onOpenWizard }: ValueProps) {
             </div>
           </div>
 
-          {/* Right: MessageAPI Gateway (The Solution) */}
+          {/* Right: MsgNexa API Gateway (The Solution) */}
           <div className="bg-gradient-to-b from-emerald-50/70 to-teal-50/40 rounded-3xl border-2 border-emerald-500 p-8 space-y-6 shadow-xl shadow-emerald-500/10 flex flex-col justify-between relative">
             <div className="absolute -top-3.5 right-8 px-4 py-1 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-xs font-black shadow-md uppercase tracking-wider">
               Recommended Choice
@@ -84,7 +84,7 @@ export default function ValueProposition({ onOpenWizard }: ValueProps) {
             <div className="space-y-4">
               <div className="flex items-center justify-between pb-4 border-b border-emerald-200">
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900">MessageAPI Enterprise Gateway</h3>
+                  <h3 className="text-lg font-bold text-slate-900">MsgNexa API Enterprise Gateway</h3>
                   <p className="text-xs text-emerald-700 font-semibold">Open • Autonomous AI</p>
                 </div>
                 <span className="px-3 py-1 rounded-full bg-emerald-200 text-emerald-900 text-xs font-extrabold">

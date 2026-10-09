@@ -8,11 +8,23 @@ import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   ConnectionState,
-  WASocket
+  WASocket,
+  makeCacheableSignalKeyStore,
+  WAMessageKey
 } from '@whiskeysockets/baileys';
 import { prisma } from '../config/database';
 import { ENV } from '../config/env';
 import { SessionStatus } from '@prisma/client';
+
+function createMemoryCache() {
+  const map = new Map<string, any>();
+  return {
+    get: <T>(key: string): T | undefined => map.get(key),
+    set: <T>(key: string, value: T): void => { map.set(key, value); },
+    del: (key: string): void => { map.delete(key); },
+    flushAll: (): void => { map.clear(); }
+  };
+}
 
 export class SessionService extends EventEmitter {
   private static instance: SessionService;
@@ -36,8 +48,25 @@ export class SessionService extends EventEmitter {
     return SessionService.instance;
   }
 
-  public getSocket(sessionId: string): WASocket | undefined {
-    return this.activeSockets.get(sessionId);
+  public getSocket(sessionId?: string): WASocket | undefined {
+    if (sessionId && this.activeSockets.has(sessionId)) {
+      const s = this.activeSockets.get(sessionId);
+      if (s && (s as any).user) return s;
+    }
+    // Fallback: Search for any active socket that has a connected user session
+    for (const [id, s] of this.activeSockets.entries()) {
+      if (s && (s as any).user) {
+        return s;
+      }
+    }
+    // Fallback: Return requested socket if exists, else first available
+    if (sessionId && this.activeSockets.has(sessionId)) {
+      return this.activeSockets.get(sessionId);
+    }
+    for (const [id, s] of this.activeSockets.entries()) {
+      if (s) return s;
+    }
+    return undefined;
   }
 
   public getCachedQr(sessionId: string): string | undefined {
@@ -111,6 +140,19 @@ export class SessionService extends EventEmitter {
     this.qrCache.delete(sessionId);
 
     try {
+      // Auto-purge any corrupted session key files that triggered Bad MAC
+      try {
+        if (fs.existsSync(sessionPath)) {
+          const authFiles = fs.readdirSync(sessionPath);
+          for (const f of authFiles) {
+            if (f.includes('196924284121325') && (f.startsWith('session-') || f.startsWith('sender-key-'))) {
+              console.log(`🧹 [Signal Fix] Auto-purged bad MAC session key file: ${f}`);
+              try { fs.unlinkSync(path.join(sessionPath, f)); } catch {}
+            }
+          }
+        }
+      } catch {}
+
       const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
       const { version } = await fetchLatestBaileysVersion().catch(() => ({
         version: [2, 3000, 1015901307] as [number, number, number],
@@ -119,14 +161,35 @@ export class SessionService extends EventEmitter {
 
       console.log(`Connecting WhatsApp session "${sessionId}" via Baileys v${version.join('.')}...`);
 
+      const memoryCache = createMemoryCache();
+      const retryCache = createMemoryCache();
+
       const socket = makeWASocket({
         version,
         logger: this.logger,
-        auth: state,
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys, this.logger, memoryCache)
+        },
+        msgRetryCounterCache: retryCache,
+        getMessage: async (key: WAMessageKey) => {
+          if (key.id) {
+            try {
+              const stored = await prisma.chatMessage.findUnique({
+                where: { id: key.id }
+              });
+              if (stored?.text) {
+                return { conversation: stored.text };
+              }
+            } catch {}
+          }
+          return undefined;
+        },
         browser: ['Ubuntu', 'Chrome', '20.0.04'],
         syncFullHistory: false,
         connectTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000
+        keepAliveIntervalMs: 30000,
+        defaultQueryTimeoutMs: undefined
       });
 
       this.activeSockets.set(sessionId, socket);
@@ -199,6 +262,17 @@ export class SessionService extends EventEmitter {
               status: SessionStatus.DISCONNECTED,
               reason: 'LOGGED_OUT'
             });
+
+            // Broadcast real-time SSE event to all connected clients
+            try {
+              const { EventsService } = await import('./events.service');
+              EventsService.getInstance().broadcast('session:status', {
+                sessionId,
+                status: SessionStatus.DISCONNECTED,
+                phoneNumber: null,
+                reason: 'LOGGED_OUT'
+              }, { businessId });
+            } catch (e) {}
             return;
           }
 
@@ -240,6 +314,16 @@ export class SessionService extends EventEmitter {
             deviceModel: 'WhatsApp Web Multi-Device'
           });
 
+          // Broadcast real-time SSE event to all connected clients
+          try {
+            const { EventsService } = await import('./events.service');
+            EventsService.getInstance().broadcast('session:status', {
+              sessionId,
+              status: SessionStatus.CONNECTED,
+              phoneNumber: `+${phoneNumber}`
+            }, { businessId });
+          } catch (e) {}
+
           console.log(`\n==========================================================`);
           console.log(`🎉 SUCCESS! WhatsApp session "${sessionId}" is CONNECTED!`);
           console.log(`📱 Linked Phone Number: +${phoneNumber}`);
@@ -264,11 +348,20 @@ export class SessionService extends EventEmitter {
           const isFromMe = !!msg.key.fromMe;
           const normalizedJid = rawJid.replace(/:.*@/, '@');
           const cleanDigits = normalizedJid.split('@')[0].replace(/[^0-9]/g, '');
-          const senderPhone = cleanDigits ? `+${cleanDigits}` : `+${rawJid.split('@')[0]}`;
-          const senderName = isFromMe ? 'You (Store)' : (msg.pushName || senderPhone);
+          const isLid = normalizedJid.endsWith('@lid') || cleanDigits.startsWith('200') || (cleanDigits.length >= 15 && !cleanDigits.startsWith('91') && !cleanDigits.startsWith('86'));
+          const senderPhone = isLid ? `${cleanDigits}@lid` : (cleanDigits ? `+${cleanDigits}` : `+${rawJid.split('@')[0]}`);
+          const senderName = isFromMe ? 'You (Store)' : (msg.pushName || (isLid ? 'WhatsApp Contact' : senderPhone));
 
           const rawMsg = msg.message;
-          const messageText =
+          const audioMessage =
+            rawMsg?.audioMessage ||
+            (rawMsg as any)?.ephemeralMessage?.message?.audioMessage ||
+            (rawMsg as any)?.viewOnceMessage?.message?.audioMessage ||
+            (rawMsg as any)?.viewOnceMessageV2?.message?.audioMessage;
+
+          let isVoiceInbound = false;
+          let inboundMediaUrl: string | undefined = undefined;
+          let messageText =
             rawMsg?.conversation ||
             rawMsg?.extendedTextMessage?.text ||
             rawMsg?.imageMessage?.caption ||
@@ -286,31 +379,104 @@ export class SessionService extends EventEmitter {
             (rawMsg as any)?.viewOnceMessageV2?.message?.extendedTextMessage?.text ||
             '';
 
+          let queryForAi = messageText;
+
+          // If incoming message contains audio / voice note
+          if (audioMessage) {
+            isVoiceInbound = true;
+            try {
+              const { AudioService } = await import('./audio.service');
+              const audioBuffer = await AudioService.downloadBaileysAudio(audioMessage);
+              if (audioBuffer && audioBuffer.length > 0) {
+                // Save inbound audio file for dashboard playback
+                const inFileName = `inbound_voice_${Date.now()}_${Math.floor(100 + Math.random() * 900)}.ogg`;
+                const inFilePath = path.join(ENV.UPLOAD_DIR, inFileName);
+                if (!fs.existsSync(ENV.UPLOAD_DIR)) {
+                  fs.mkdirSync(ENV.UPLOAD_DIR, { recursive: true });
+                }
+                fs.writeFileSync(inFilePath, audioBuffer);
+                inboundMediaUrl = `/uploads/${inFileName}`;
+
+                // Transcribe using Groq Whisper (whisper-large-v3-turbo)
+                const transcript = await AudioService.transcribeGroqWhisper(
+                  audioBuffer,
+                  audioMessage.mimetype || 'audio/ogg'
+                );
+
+                if (transcript) {
+                  messageText = messageText
+                    ? `${messageText}\n\n[User sent a voice message. Transcript: "${transcript}"]`
+                    : `[User sent a voice message. Transcript: "${transcript}"]`;
+                  queryForAi = transcript;
+                } else {
+                  messageText = `🎙️ [User sent a voice message: 0:0${audioMessage.seconds || 5}s]`;
+                  queryForAi = 'Hello';
+                }
+              }
+            } catch (audioErr: any) {
+              console.error('Groq Whisper Processing Error:', audioErr);
+            }
+          }
+
           if (!messageText) continue;
 
           console.log(`📩 [WhatsApp ${sessionId}] ${isFromMe ? 'Outbound (from linked device)' : 'Inbound from ' + senderName} (${senderPhone}): "${messageText}"`);
 
           try {
-            // Upsert contact in DB
-            const contact = await prisma.contact.upsert({
+            // Check if contact with senderPhone already exists
+            let contact = await prisma.contact.findFirst({
               where: {
-                businessId_phone: {
-                  businessId,
-                  phone: senderPhone
-                }
-              },
-              update: {
-                ...(!isFromMe && msg.pushName ? { name: msg.pushName } : {}),
-                lastSeenAt: new Date(),
-                tag: sessionId
-              },
-              create: {
                 businessId,
-                name: isFromMe ? `Customer ${senderPhone.slice(-4)}` : senderName,
-                phone: senderPhone,
-                tag: sessionId
+                phone: senderPhone
               }
             });
+
+            if (!contact) {
+              // Find by related formats (digits, +prefix, @lid)
+              contact = await prisma.contact.findFirst({
+                where: {
+                  businessId,
+                  OR: [
+                    { phone: `+${cleanDigits}` },
+                    { phone: `${cleanDigits}@lid` },
+                    { phone: cleanDigits }
+                  ]
+                }
+              });
+            }
+
+            if (contact) {
+              try {
+                contact = await prisma.contact.update({
+                  where: { id: contact.id },
+                  data: {
+                    ...(!isFromMe && msg.pushName ? { name: msg.pushName } : {}),
+                    phone: senderPhone,
+                    lastSeenAt: new Date(),
+                    tag: sessionId
+                  }
+                });
+              } catch (updateErr) {
+                // If unique constraint prevented updating phone, keep existing phone and update lastSeenAt
+                contact = await prisma.contact.update({
+                  where: { id: contact.id },
+                  data: {
+                    ...(!isFromMe && msg.pushName ? { name: msg.pushName } : {}),
+                    lastSeenAt: new Date(),
+                    tag: sessionId
+                  }
+                });
+              }
+            } else {
+              contact = await prisma.contact.create({
+                data: {
+                  businessId,
+                  name: isFromMe ? `Customer ${cleanDigits.slice(-4)}` : senderName,
+                  phone: senderPhone,
+                  tag: sessionId
+                }
+              });
+            }
 
             // Save message in DB
             const savedMsg = await prisma.chatMessage.create({
@@ -318,6 +484,8 @@ export class SessionService extends EventEmitter {
                 contactId: contact.id,
                 sender: isFromMe ? 'business' : 'customer',
                 text: messageText,
+                messageType: isVoiceInbound ? 'AUDIO' : 'TEXT',
+                mediaUrl: inboundMediaUrl || null,
                 status: 'DELIVERED'
               }
             });
@@ -339,6 +507,8 @@ export class SessionService extends EventEmitter {
               id: savedMsg.id,
               sender: isFromMe ? 'business' : 'customer',
               text: messageText,
+              messageType: isVoiceInbound ? 'audio' : 'text',
+              mediaUrl: inboundMediaUrl || null,
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               status: 'read'
             };
@@ -367,17 +537,121 @@ export class SessionService extends EventEmitter {
               }
 
               // Query RAG Knowledge Base and ERP catalog
-              console.log(`🤖 [RAG Engine] Generating AI response with pgvector retrieval for: "${messageText}"...`);
+              console.log(`🤖 [RAG Engine] Generating AI response with pgvector retrieval for: "${queryForAi}"...`);
               const erpReply = await ErpService.queryErp({
                 businessId: business.id,
-                query: messageText
+                query: queryForAi
               });
-              console.log(`🤖 [RAG Engine] AI Response synthesized:\n${erpReply.aiGeneratedReply}`);
+              const finalAiReply = (erpReply.aiGeneratedReply || '')
+                .replace(/\*\*(.*?)\*\*/g, '*$1*')
+                .replace(/^---+$/gm, '')
+                .trim();
+              console.log(`🤖 [RAG Engine] AI Response synthesized:\n${finalAiReply}`);
 
               await new Promise((r) => setTimeout(r, 1200));
 
               // Send reply on WhatsApp using normalized JID
-              const sentReply = await socket.sendMessage(normalizedJid, { text: erpReply.aiGeneratedReply });
+              let sentReply: any = null;
+              const hasMedia = !!erpReply.mediaUrl;
+              const isImage = erpReply.messageType === 'image' || (hasMedia && !erpReply.messageType);
+              const isDoc = erpReply.messageType === 'document';
+
+              let replyMediaUrl = erpReply.mediaUrl || null;
+              let replyMessageType: 'IMAGE' | 'DOCUMENT' | 'AUDIO' | 'TEXT' = 'TEXT';
+
+              // RULE 1: If someone says create image or pdf -> Send image/pdf (NO audio response)
+              if (isImage && (erpReply.imageBuffer || erpReply.mediaUrl)) {
+                const imgPayload: any = erpReply.imageBuffer
+                  ? { image: erpReply.imageBuffer, caption: finalAiReply }
+                  : { image: { url: erpReply.mediaUrl }, caption: finalAiReply };
+
+                sentReply = await socket.sendMessage(normalizedJid, imgPayload).catch(async (mediaErr: any) => {
+                  console.warn(`⚠️ Baileys image dispatch failed (${mediaErr?.message}). Falling back to text...`);
+                  return socket.sendMessage(normalizedJid, { text: finalAiReply }).catch(() => null);
+                });
+                replyMessageType = 'IMAGE';
+                replyMediaUrl = erpReply.mediaUrl;
+              } else if (isDoc && (erpReply.mediaUrl || (erpReply as any).pdfBuffer)) {
+                const pdfName = (erpReply as any).fileName || `gym_pdf_${Date.now()}.pdf`;
+                const docPayload: any = (erpReply as any).pdfBuffer
+                  ? {
+                      document: (erpReply as any).pdfBuffer,
+                      mimetype: 'application/pdf',
+                      fileName: pdfName,
+                      caption: finalAiReply
+                    }
+                  : {
+                      document: { url: erpReply.mediaUrl },
+                      mimetype: 'application/pdf',
+                      fileName: pdfName,
+                      caption: finalAiReply
+                    };
+
+                sentReply = await socket.sendMessage(normalizedJid, docPayload).catch(async (docErr: any) => {
+                  console.warn(`⚠️ Baileys document dispatch failed (${docErr?.message}). Falling back to text...`);
+                  return socket.sendMessage(normalizedJid, { text: finalAiReply }).catch(() => null);
+                });
+                replyMessageType = 'DOCUMENT';
+                replyMediaUrl = erpReply.mediaUrl;
+              } else if (isVoiceInbound) {
+                // RULE 2: ONLY if user sent an AUDIO voice message AND query is normal -> Respond with voice note + text attached
+                try {
+                  const { AudioService } = await import('./audio.service');
+                  const speech = await AudioService.synthesizeSpeech(finalAiReply);
+
+                  if (speech && speech.audioBuffer && speech.audioBuffer.length > 0) {
+                    // Convert to WhatsApp-compliant OGG Opus if FFmpeg is available
+                    const oggResult = AudioService.convertToOggOpus(speech.audioBuffer);
+
+                    if (oggResult) {
+                      // True WhatsApp PTT voice note with waveform, 100% supported on all iOS & Android devices
+                      sentReply = await socket.sendMessage(normalizedJid, {
+                        audio: oggResult.oggBuffer,
+                        mimetype: 'audio/ogg; codecs=opus',
+                        ptt: true
+                      }).catch(() => null);
+                      replyMediaUrl = oggResult.mediaUrl;
+                    } else {
+                      // When OGG Opus conversion is unavailable, send as standard audio message (ptt: false)
+                      // Important: ptt: true with MP3 crashes WhatsApp mobile with "format not supported"!
+                      sentReply = await socket.sendMessage(normalizedJid, {
+                        audio: speech.audioBuffer,
+                        mimetype: 'audio/mp4',
+                        ptt: false
+                      }).catch(async () => {
+                        return socket.sendMessage(normalizedJid, {
+                          audio: speech.audioBuffer,
+                          mimetype: 'audio/mpeg',
+                          ptt: false
+                        }).catch(() => null);
+                      });
+                      replyMediaUrl = speech.mediaUrl;
+                    }
+
+                    // Send the accompanying formatted text alongside it for complete readability
+                    await socket.sendMessage(normalizedJid, {
+                      text: finalAiReply
+                    }).catch(() => null);
+
+                    replyMessageType = 'AUDIO';
+                  } else {
+                    sentReply = await socket.sendMessage(normalizedJid, { text: finalAiReply }).catch(() => null);
+                    replyMessageType = 'TEXT';
+                    replyMediaUrl = null;
+                  }
+                } catch (ttsErr: any) {
+                  console.warn('Notice generating audio response, falling back to text:', ttsErr.message);
+                  sentReply = await socket.sendMessage(normalizedJid, { text: finalAiReply }).catch(() => null);
+                  replyMessageType = 'TEXT';
+                  replyMediaUrl = null;
+                }
+              } else {
+                // RULE 3: User sent a TEXT message AND normal query -> Respond with clean TEXT ONLY (NO audio attached)
+                sentReply = await socket.sendMessage(normalizedJid, { text: finalAiReply }).catch(() => null);
+                replyMessageType = 'TEXT';
+                replyMediaUrl = null;
+              }
+
               if (sentReply?.key?.id) {
                 this.markMessageAsSent(sentReply.key.id);
               }
@@ -388,7 +662,9 @@ export class SessionService extends EventEmitter {
                 data: {
                   contactId: contact.id,
                   sender: 'business',
-                  text: erpReply.aiGeneratedReply,
+                  text: finalAiReply,
+                  messageType: replyMessageType,
+                  mediaUrl: replyMediaUrl,
                   isAiGenerated: true,
                   status: 'SENT'
                 }
@@ -397,7 +673,9 @@ export class SessionService extends EventEmitter {
               const botMsgPayload = {
                 id: botMsg.id,
                 sender: 'business',
-                text: erpReply.aiGeneratedReply,
+                text: finalAiReply,
+                messageType: replyMessageType.toLowerCase(),
+                mediaUrl: replyMediaUrl,
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 isAiGenerated: true,
                 status: 'read'
@@ -409,7 +687,7 @@ export class SessionService extends EventEmitter {
                 contactId: contact.id,
                 contact: {
                   ...contactPayload,
-                  lastMessage: erpReply.aiGeneratedReply,
+                  lastMessage: finalAiReply,
                   unreadCount: 0
                 },
                 message: botMsgPayload
@@ -484,46 +762,19 @@ export class SessionService extends EventEmitter {
       where: { id: sessionId }
     }).catch(() => null);
 
-    if (deleteMessages && businessId) {
-      const otherSessionsCount = await prisma.whatsAppSession.count({
-        where: { businessId }
-      });
-
-      let contactsToDelete: { id: string }[] = [];
-      if (otherSessionsCount === 0) {
-        // If all sessions are deleted, wipe all remaining contacts & chats for this business
-        contactsToDelete = await prisma.contact.findMany({
-          where: { businessId },
-          select: { id: true }
-        });
-      } else {
-        // Delete contacts associated with this specific session
-        contactsToDelete = await prisma.contact.findMany({
-          where: {
-            businessId,
-            OR: [
-              { tag: sessionId },
-              { tag: { contains: sessionId } }
-            ]
-          },
-          select: { id: true }
-        });
-      }
-
-      const cIds = contactsToDelete.map((c) => c.id);
-      if (cIds.length > 0) {
-        await prisma.chatMessage.deleteMany({
-          where: { contactId: { in: cIds } }
-        }).catch(() => null);
-
-        await prisma.contact.deleteMany({
-          where: { id: { in: cIds } }
-        }).catch(() => null);
-        console.log(`🗑️ Deleted ${cIds.length} contacts and their message history for session "${sessionId}"`);
-      }
-    }
+    // Note: Never wipe contacts or chat message history when a session is deleted or disconnected.
+    // Customer records and conversation history belong to the business account and must persist across device re-pairings.
+    console.log(`ℹ️ Session "${sessionId}" removed. All business contacts and chat history remain safely preserved.`);
 
     this.emit(`status:${sessionId}`, { status: SessionStatus.DISCONNECTED, reason: 'DELETED' });
+    try {
+      const { EventsService } = await import('./events.service');
+      EventsService.getInstance().broadcast('session:status', {
+        sessionId,
+        status: SessionStatus.DISCONNECTED,
+        reason: 'DELETED'
+      }, { businessId });
+    } catch (e) {}
   }
 
   public async disconnectSession(sessionId: string): Promise<void> {
@@ -541,6 +792,9 @@ export class SessionService extends EventEmitter {
 
     this.qrCache.delete(sessionId);
 
+    const sessionObj = await prisma.whatsAppSession.findUnique({ where: { id: sessionId } });
+    const businessId = sessionObj?.businessId;
+
     await prisma.whatsAppSession.update({
       where: { id: sessionId },
       data: {
@@ -550,6 +804,14 @@ export class SessionService extends EventEmitter {
     }).catch(() => null);
 
     this.emit(`status:${sessionId}`, { status: SessionStatus.DISCONNECTED, reason: 'DISCONNECTED' });
+    try {
+      const { EventsService } = await import('./events.service');
+      EventsService.getInstance().broadcast('session:status', {
+        sessionId,
+        status: SessionStatus.DISCONNECTED,
+        reason: 'DISCONNECTED'
+      }, { businessId });
+    } catch (e) {}
   }
 
   public async requestPairingCode(sessionId: string, phoneNumber: string): Promise<string> {

@@ -46,10 +46,10 @@ export default function Home() {
     if (activeId && (saved === "workspace" || saved === null || window.location.hash)) {
       setCurrentView("workspace");
       saveCurrentView("workspace");
-      // Brief smooth transition to show category loader while workspace initializes
+      // 3-second delay to show category loader with smooth progress while workspace initializes
       const timer = setTimeout(() => {
         setIsClientReady(true);
-      }, 280);
+      }, 3000);
       return () => clearTimeout(timer);
     } else {
       setCurrentView("landing");
@@ -80,8 +80,12 @@ export default function Home() {
   const handleAccountCreated = (newAcc: BusinessAccount) => {
     setActiveAccountOverride(newAcc);
     setActiveAccountId(newAcc.id);
+    setIsClientReady(false);
     saveCurrentView("workspace");
     setCurrentView("workspace");
+    setTimeout(() => {
+      setIsClientReady(true);
+    }, 3000);
     setSuccessBanner(`🎉 ${newAcc.businessName} account created! Master API Token: ${newAcc.apiKey}`);
     setTimeout(() => setSuccessBanner(null), 10000);
   };
@@ -89,15 +93,23 @@ export default function Home() {
   const handleLoginSuccess = (account: BusinessAccount) => {
     setActiveAccountOverride(account);
     setActiveAccountId(account.id);
+    setIsClientReady(false);
     saveCurrentView("workspace");
     setCurrentView("workspace");
+    setTimeout(() => {
+      setIsClientReady(true);
+    }, 3000);
     setSuccessBanner(`👋 Welcome back to ${account.businessName} (${account.domain || 'Domain Authenticated'})!`);
     setTimeout(() => setSuccessBanner(null), 8000);
   };
 
   const handleGoToDashboard = () => {
+    setIsClientReady(false);
     saveCurrentView("workspace");
     setCurrentView("workspace");
+    setTimeout(() => {
+      setIsClientReady(true);
+    }, 3000);
   };
 
   const handleBackToLanding = () => {
@@ -146,6 +158,7 @@ export default function Home() {
         businessName={previewAccount?.businessName}
         domain={previewAccount?.domain}
         message={previewAccount?.businessName ? `Opening ${previewAccount.businessName}...` : "Opening workspace..."}
+        durationMs={3000}
       />
     );
   }

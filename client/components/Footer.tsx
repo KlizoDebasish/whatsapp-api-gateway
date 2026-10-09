@@ -14,14 +14,17 @@ export default function Footer({ onOpenWizard }: FooterProps) {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           {/* Col 1: Brand info */}
           <div className="space-y-4 md:col-span-1">
-            <div className="flex items-center gap-2 text-white font-black text-base">
-              <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center font-bold text-white">
+            <div className="flex items-center gap-2.5 text-white font-black text-base">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center font-bold text-white shadow-md shadow-emerald-500/20">
                 <MessageSquare className="w-4 h-4" />
               </div>
-              <span>MessageAPI</span>
+              <div className="flex flex-col">
+                <span className="leading-none text-base font-black">MsgNexa</span>
+                <span className="text-[9px] font-semibold tracking-wider text-slate-400 mt-0.5">Connect. Automate. Scale.</span>
+              </div>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Enterprise-grade, multi-account WhatsApp Gateway & Voice/Text ERP Query Engine for modern businesses.
+              MsgNexa API — Messaging APIs · AI Agents · RAG · Webhooks · Automation. Enterprise WhatsApp Gateway for modern businesses.
             </p>
             <div className="flex items-center gap-2 text-emerald-400 font-semibold text-[11px]">
               <ShieldCheck className="w-4 h-4" />
@@ -71,7 +74,7 @@ export default function Footer({ onOpenWizard }: FooterProps) {
         </div>
 
         <div className="pt-8 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-500">
-          <p suppressHydrationWarning>© {new Date().getFullYear()} MessageAPI • Free WhatsApp Business Gateway & ERP Assistant.</p>
+          <p suppressHydrationWarning>© {new Date().getFullYear()} MsgNexa API • Messaging APIs · AI Agents · RAG · Webhooks · Automation.</p>
           <div className="flex items-center gap-4">
             <span>Anti-Ban 1–30s Human Pacing</span>
             <span>•</span>

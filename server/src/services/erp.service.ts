@@ -1,6 +1,7 @@
 import { RagService } from './rag.service';
 import { prisma } from '../config/database';
 import { ENV } from '../config/env';
+import { ImageService } from './image.service';
 
 export class ErpService {
   /**
@@ -23,6 +24,9 @@ export class ErpService {
       inStock: boolean;
     }>;
     aiGeneratedReply: string;
+    mediaUrl?: string;
+    imageBuffer?: Buffer;
+    messageType?: 'text' | 'image' | 'document';
   }> {
     const { businessId, query } = params;
     const lowerQuery = query.toLowerCase().trim();
@@ -44,19 +48,75 @@ export class ErpService {
     const isRestaurant = bizCategory === 'restaurant' || bizCategory === 'cafe' || bizCategory === 'food' || business.businessName.toLowerCase().includes('cafe') || business.businessName.toLowerCase().includes('bistro') || business.businessName.toLowerCase().includes('restaurant');
     const isSalon = bizCategory === 'salon' || bizCategory === 'spa' || bizCategory === 'beauty' || business.businessName.toLowerCase().includes('salon') || business.businessName.toLowerCase().includes('spa');
 
-    // 1. VectorDB Retrieval (Catalog Semantic Search via pgvector)
-    let catalogMatches: any[] = [];
-    try {
-      catalogMatches = await RagService.semanticSearch({
-        businessId: business.id,
-        query,
-        limit: 4
-      });
-    } catch (err: any) {
-      console.warn('Catalog semantic search warning:', err.message);
+    // Check if query is a greeting
+    const isGreeting =
+      /^(hi|hello|hey|namaste|hlo|heya|hola|good morning|good afternoon|good evening|start|hi there|hello there)[!.\s]*$/i.test(lowerQuery) ||
+      ((/^(hi|hello|hey|namaste)\b/i.test(lowerQuery) || /^(hlo|heya)\b/i.test(lowerQuery)) && lowerQuery.split(/\s+/).length <= 2);
+
+    if (isGreeting) {
+      const dynamicGreeting = (business.greetingMessage || `Hello! Welcome to ${business.businessName}! How can we assist you today?`)
+        .replace(/{BusinessName}/g, business.businessName)
+        .replace(/\*\*(.*?)\*\*/g, '*$1*')
+        .trim();
+      return {
+        matched: true,
+        items: [],
+        aiGeneratedReply: dynamicGreeting
+      };
     }
 
-    // 2. VectorDB Retrieval (Knowledge Base Document Chunks via pgvector)
+    // 1. Fetch live catalog items from database for this specific business
+    const dbCatalogItems = await prisma.catalogItem.findMany({
+      where: { businessId: business.id },
+      orderBy: { name: 'asc' }
+    });
+
+    // Check if query is an Image or Document generation request
+    const imageDocResult = await ImageService.handleImageOrDocQuery({
+      businessId: business.id,
+      businessName: business.businessName,
+      category: business.category,
+      query,
+      catalogItems: dbCatalogItems,
+      currency
+    });
+
+    if (imageDocResult.handled) {
+      return {
+        matched: true,
+        items: [],
+        aiGeneratedReply: imageDocResult.aiGeneratedReply,
+        mediaUrl: imageDocResult.mediaUrl,
+        imageBuffer: imageDocResult.imageBuffer,
+        pdfBuffer: (imageDocResult as any).pdfBuffer,
+        fileName: (imageDocResult as any).fileName,
+        messageType: imageDocResult.messageType || 'text'
+      };
+    }
+
+    const distinctCategories = Array.from(
+      new Set(dbCatalogItems.map((item) => item.category?.trim()).filter(Boolean))
+    );
+
+    // Intent checks
+    const isHoursQuery = /\b(time|timing|timings|open|close|hours|schedule|operating hours)\b/i.test(lowerQuery);
+    const isLocationQuery = /\b(address|location|where|map|shop location|store location)\b/i.test(lowerQuery);
+    const isStockQuery = /\b(stock|stocks|inventory|available|availability|units left|in stock|stock details|items available|how many|units left|qty|quantity|left in stock|how much stock|catalog|products|items|menu|list|options)\b/i.test(lowerQuery);
+
+    // Check if query specifies one of the business's categories
+    const matchedCategory = distinctCategories.find((cat) => {
+      const c = cat.toLowerCase();
+      return lowerQuery === c || lowerQuery.includes(c) || c.split(/\s+/).some((w) => w.length >= 4 && lowerQuery.includes(w));
+    });
+
+    // Check if query directly mentions a specific product name or SKU in the database
+    const matchedProduct = dbCatalogItems.find((item) => {
+      const n = item.name.toLowerCase();
+      const s = item.sku.toLowerCase();
+      return lowerQuery.includes(n) || lowerQuery.includes(s) || n.split(/\s+/).some((w) => w.length >= 4 && lowerQuery.includes(w));
+    });
+
+    // 2. VECTOR DB RETRIEVAL (Knowledge Base Document Chunks via pgvector)
     let docMatches: any[] = [];
     try {
       const kbResult = await RagService.queryKnowledgeBase({
@@ -68,180 +128,175 @@ export class ErpService {
     } catch (err: any) {
       console.warn('Doc chunks retrieval warning:', err.message);
     }
-
-    const topCatalogMatch = catalogMatches.find((m) => m.similarity > 0.35) || catalogMatches[0];
     const topDocMatch = docMatches.find((d) => d.similarity > 0.45) || docMatches[0];
 
-    // Format retrieved vector context for LLM
-    const catalogContextText = catalogMatches.length > 0
-      ? catalogMatches.map((item, idx) => 
-          `[Item ${idx + 1}] Name: ${item.name} | SKU: ${item.sku} | Category: ${item.category} | Price: ${currency}${item.price} | Stock: ${item.stock} ${item.unit} (${item.stock > 0 ? 'In Stock' : 'Out of Stock'}) | Description: ${item.description || 'N/A'}`
-        ).join('\n')
-      : 'No exact catalog matches found in vector database.';
-
-    const docContextText = docMatches.length > 0
-      ? docMatches.map((d, idx) => `[Source ${idx + 1} (${d.docName})]: ${d.text}`).join('\n\n')
-      : 'No specific document chunks found.';
-
-    // Intent checks
-    const isHoursQuery = /\b(time|timing|timings|open|close|hours|schedule)\b/i.test(lowerQuery);
-    const isLocationQuery = /\b(address|location|where|map|shop location)\b/i.test(lowerQuery);
-
-    // 3. Synthesize response via Groq LLM (LangChain ChatGroq / openai/gpt-oss-120b)
     let synthesizedReply = '';
 
-    if (ENV.GROQ_API_KEY) {
-      try {
-        const groqModel = ENV.GROQ_LLM_MODEL || 'openai/gpt-oss-120b';
-        const systemPrompt = `You are the official WhatsApp AI Assistant for "${business.businessName}" (${business.categoryLabel || business.category}).
-Your persona: "${business.aiPersonaPrompt}".
+    // =========================================================================
+    // BRANCH A: USER EXPLICITLY ASKS ABOUT STOCK / INVENTORY
+    // =========================================================================
+    if (isStockQuery || matchedCategory) {
+      // Case 1: General stock query without specifying a category or product
+      // e.g. "i want stock details", "what stock do you have?", "check stock"
+      if (!matchedCategory && !matchedProduct) {
+        if (dbCatalogItems.length === 0) {
+          synthesizedReply = `Currently, no stock is available now.. we will update soon! Please feel free to ask about our timings or contact our front desk at *${business.phone}*.`;
+        } else {
+          // Professionally ask which category they want to choose from
+          const catList = distinctCategories.map((c) => `• *${c}*`).join('\n');
+          synthesizedReply = `Hello! We have live inventory available across several categories at *${business.businessName}*:\n\n${catList}\n\nWhich category would you like to check stock details for? Simply reply with the category name!`;
+        }
+      }
+      // Case 2: User specifies a category (e.g. "supplements", "memberships", "medicines")
+      else if (matchedCategory) {
+        const catItems = dbCatalogItems.filter(
+          (i) => i.category.toLowerCase() === matchedCategory.toLowerCase() ||
+                 i.category.toLowerCase().includes(matchedCategory.toLowerCase()) ||
+                 matchedCategory.toLowerCase().includes(i.category.toLowerCase())
+        );
 
-CRITICAL INSTRUCTION - EVERY RESPONSE MUST STRICTLY FOLLOW THIS 3-PART STRUCTURE:
-1. AI GREETING & CONTEXTUAL QUESTION:
-   - Begin with a warm, energetic greeting acknowledging the business (e.g. "Hello! Welcome to ${business.businessName}! 👋").
-   - Follow immediately with a thoughtful, contextual question tailored to the customer query and industry:
-     * Gym / Fitness: e.g. "Are you looking for membership plans, personal workout coaching, or supplement guidance today?"
-     * Pharmacy / Medicine: e.g. "Are you inquiring about medicine availability, prescription fulfillment, dosage details, or healthcare consultations today?"
-     * Grocery / Supermarket: e.g. "Are you looking for fresh produce, daily essentials, or packaged groceries today?"
-     * Electronics / Tech: e.g. "Are you looking for device specifications, warranty information, or tech recommendations today?"
-     * Restaurant / Food: e.g. "Are you inquiring about our chef specials, dining menu, or booking a table reservation today?"
-     * Salon / Spa: e.g. "Are you looking to schedule a haircut, styling, skin treatment, or beauty appointment today?"
-     * General / Retail: e.g. "How can I assist you with our catalog, services, or order placement today?"
-2. GROUNDED VECTORDB RETRIEVAL:
-   - Present the grounded facts retrieved from our pgvector vector database and catalog records.
-   - If products found: list product name, SKU, price in ${currency}, stock status (✅ In Stock or ⚠️ Out of Stock), and details.
-   - If document chunks found: accurately answer using the retrieved knowledge base facts.
-   - If asking timings/location: state operating hours (${business.workingHours}) and address (${business.address || 'Main Road'}).
-3. HELPFUL NEXT STEP & CALL TO ACTION:
-   - Conclude with an encouraging, actionable question or closing (e.g. "Would you like me to reserve a trial session / confirm your order? Reply with your preferred details to proceed!").
+        const inStockItems = catItems.filter((i) => i.stock > 0);
 
-Formatting: Use WhatsApp markdown (*bold*, bullet points •, clear blank lines). Do NOT invent products not in the retrieved context.`;
+        if (catItems.length === 0 || inStockItems.length === 0) {
+          synthesizedReply = `Currently, no stock is available in *${matchedCategory}*.. we will update soon! Please let us know if you would like to explore our other categories or check back shortly.`;
+        } else {
+          // Provide 4-5 products according to that category with live price and stock
+          const top4to5 = inStockItems.slice(0, 5);
+          const productListText = top4to5.map((item, idx) => {
+            return `${idx + 1}. *${item.name}* (\`${item.sku}\`)\n   • Price: *${currency}${Number(item.price).toFixed(2)}*${item.unit && item.unit !== 'pcs' ? ` / ${item.unit}` : ''}\n   • Stock: *${item.stock} ${item.unit} available* (✅ In Stock)${item.description ? `\n   • Info: ${item.description}` : ''}`;
+          }).join('\n\n');
 
-        const userPrompt = `Customer Query: "${query}"
+          synthesizedReply = `📦 *Live Stock Details for ${matchedCategory} at ${business.businessName}:*\n\n${productListText}\n\nWould you like to place an order or check details for another category?`;
+        }
+      }
+      // Case 3: User specifies a particular product (e.g. "do you have dolo 650 in stock?", "whey protein stock")
+      else if (matchedProduct) {
+        if (matchedProduct.stock > 0) {
+          synthesizedReply = `✅ *${matchedProduct.name}* (\`${matchedProduct.sku}\`) is in stock!\n• Category: *${matchedProduct.category}*\n• Price: *${currency}${Number(matchedProduct.price).toFixed(2)}*${matchedProduct.unit && matchedProduct.unit !== 'pcs' ? ` / ${matchedProduct.unit}` : ''}\n• Available Stock: *${matchedProduct.stock} ${matchedProduct.unit}*\n${matchedProduct.description ? `• Details: ${matchedProduct.description}\n` : ''}Would you like to place an order? Please reply with your desired quantity to proceed!`;
+        } else {
+          synthesizedReply = `⚠️ *${matchedProduct.name}* (\`${matchedProduct.sku}\`) is currently out of stock.. we will update soon! Would you like us to notify you when it arrives?`;
+        }
+      } else {
+        // Stock query but item not in database
+        synthesizedReply = `We could not find that item in our current inventory at *${business.businessName}*. No stock is available now.. we will update soon! Please feel free to check our other categories or reach our team at *${business.phone}*.`;
+      }
+    }
+    // =========================================================================
+    // BRANCH B: HOURS OR LOCATION INQUIRIES
+    // =========================================================================
+    else if (isHoursQuery) {
+      synthesizedReply = `🕒 *Operating Hours for ${business.businessName}:*\nWe are open *${business.workingHours}*.\nFeel free to drop by or contact our front desk at *${business.phone}*!`;
+    } else if (isLocationQuery) {
+      synthesizedReply = `📍 *Store Location:* ${business.businessName}\n${business.address || 'Central Road'}\n📞 Front Desk: *${business.phone}*\nHow can I assist you today?`;
+    }
+    // =========================================================================
+    // BRANCH C: GENERAL INQUIRIES (DO NOT GIVE STOCK DETAILS UNPROMPTED)
+    // =========================================================================
+    else {
+      // Check RAG Knowledge Base first
+      const docContextText = docMatches.length > 0
+        ? docMatches.map((d, idx) => `[Source ${idx + 1} (${d.docName})]: ${d.text}`).join('\n\n')
+        : 'No specific knowledge base document chunks found.';
 
-[Retrieved VectorDB Catalog Context]:
-${catalogContextText}
+      if (ENV.GROQ_API_KEY) {
+        try {
+          const groqModel = ENV.GROQ_LLM_MODEL || 'openai/gpt-oss-120b';
+          const systemPrompt = `You are the official WhatsApp AI Assistant for "${business.businessName}".
+Your System Persona: "${business.aiPersonaPrompt}".
+Your Business Greeting: "${business.greetingMessage}".
 
-[Retrieved VectorDB Document Chunks]:
+CONVERSATION & RESPONSE GUIDELINES:
+1. NATURAL & CONCISE WHATSAPP TONE:
+   - Speak warmly, helpfully, and professionally like a real team member chatting with a customer on WhatsApp.
+   - Answer the customer's specific question directly.
+2. STOCK RULES (STRICT):
+   - The customer DID NOT ask for stock or inventory counts.
+   - NEVER mention remaining units, stock quantities, or warehouse numbers unless the customer explicitly asks for stock.
+   - Just explain the features, benefits, prices, timings, or service details naturally.
+3. TIMINGS & STORE INFO:
+   - Hours: ${business.workingHours}
+   - Address: ${business.address || 'our store location'}
+   - Phone: ${business.phone}
+   - Currency: ${currency}
+4. FORMATTING:
+   - Strictly use single asterisks for bold (*text*), NEVER use double asterisks (**text**).
+   - Keep answers brief and conversational (1-2 short paragraphs max).`;
+
+          const userPrompt = `Customer Question: "${query}"
+
+[Retrieved Knowledge Base Documents]:
 ${docContextText}
 
-[Store Profile]:
-• Business: ${business.businessName}
-• Category: ${business.categoryLabel || business.category}
-• Working Hours: ${business.workingHours}
-• Store Location: ${business.address || 'Central Road'}
-• Direct Phone: ${business.phone}
-• Currency: ${currency}
+Please generate a helpful and concise WhatsApp response.`;
 
-Please generate the complete 3-part WhatsApp response now.`;
-
-        let groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${ENV.GROQ_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: groqModel,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.35,
-            max_tokens: 600
-          })
-        });
-
-        if (!groqRes.ok) {
-          // Fallback to llama-3.3-70b-versatile
-          groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          let groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${ENV.GROQ_API_KEY}`,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              model: 'llama-3.3-70b-versatile',
+              model: groqModel,
               messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
               ],
-              temperature: 0.35,
-              max_tokens: 600
+              temperature: 0.3,
+              max_tokens: 350
             })
           });
-        }
 
-        if (groqRes.ok) {
-          const data = await groqRes.json();
-          synthesizedReply = data.choices?.[0]?.message?.content?.trim() || '';
+          if (!groqRes.ok) {
+            groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${ENV.GROQ_API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.3,
+                max_tokens: 350
+              })
+            });
+          }
+
+          if (groqRes.ok) {
+            const data = await groqRes.json();
+            synthesizedReply = data.choices?.[0]?.message?.content?.trim() || '';
+          }
+        } catch (err: any) {
+          console.warn('Groq synthesis notice:', err.message);
         }
-      } catch (err: any) {
-        console.warn('Groq synthesis notice:', err.message);
+      }
+
+      if (!synthesizedReply) {
+        if (topDocMatch && topDocMatch.similarity > 0.45) {
+          synthesizedReply = `📄 *Information from ${business.businessName}:*\n${topDocMatch.text}\n\nLet me know if you would like more details!`;
+        } else if (matchedProduct) {
+          synthesizedReply = `📦 *${matchedProduct.name}*\n• Price: *${currency}${Number(matchedProduct.price).toFixed(2)}*${matchedProduct.unit && matchedProduct.unit !== 'pcs' ? ` / ${matchedProduct.unit}` : ''}\n${matchedProduct.description ? `• Details: ${matchedProduct.description}\n` : ''}Would you like more details or help getting started?`;
+        } else {
+          const welcome = business.greetingMessage
+            ? business.greetingMessage.replace(/{BusinessName}/g, business.businessName)
+            : `Thank you for contacting *${business.businessName}*! 👋`;
+          synthesizedReply = `${welcome}\n\nHow can I assist you with our services, plans, or timings today?`;
+        }
       }
     }
 
-    // 4. Deterministic High-Quality Fallback if LLM API is unavailable
-    if (!synthesizedReply) {
-      let greetingAndQuestion = '';
-      let closingCta = '';
-
-      if (isGym) {
-        greetingAndQuestion = `👋 *Hello! Welcome to ${business.businessName}!* 🏋️\nAre you looking for membership plans, personal workout coaching, or supplement guidance today?`;
-        closingCta = `💬 Would you like me to reserve a trial session or guide you through our membership options? Reply with your preference!`;
-      } else if (isPharma) {
-        greetingAndQuestion = `👋 *Hello! Welcome to ${business.businessName}!* 🌿💊\nAre you looking for medicine availability, prescription fulfillment, dosage details, or healthcare consultations today?`;
-        closingCta = `💬 Would you like to place an order or speak directly with our team at *${business.phone}*? Let me know how you'd like to proceed!`;
-      } else if (isGrocery) {
-        greetingAndQuestion = `👋 *Hello! Welcome to ${business.businessName}!* 🛒🍎\nAre you looking for fresh produce, daily essentials, or packaged groceries today?`;
-        closingCta = `💬 Would you like to confirm this order for express home delivery or pickup? Reply with your item list!`;
-      } else if (isElectronics) {
-        greetingAndQuestion = `👋 *Hello! Welcome to ${business.businessName}!* 💻⚡\nAre you looking for device specifications, warranty information, or tech recommendations today?`;
-        closingCta = `💬 Would you like to reserve this device or check in-store stock? Let me know your preferred model!`;
-      } else if (isRestaurant) {
-        greetingAndQuestion = `👋 *Hello! Welcome to ${business.businessName}!* 🍽️🍕\nAre you inquiring about our chef specials, dining menu, or booking a table reservation today?`;
-        closingCta = `💬 Would you like to book a table or place a takeaway order? Let me know your party size or pickup time!`;
-      } else if (isSalon) {
-        greetingAndQuestion = `👋 *Hello! Welcome to ${business.businessName}!* 💇‍♀️✨\nAre you looking to schedule a haircut, styling, skin treatment, or beauty appointment today?`;
-        closingCta = `💬 Would you like to book an appointment with our stylists? Reply with your preferred date and time slot!`;
-      } else {
-        greetingAndQuestion = `👋 *Hello! Welcome to ${business.businessName}!* 🌟\nHow can I assist you with our catalog, services, or order placement today?`;
-        closingCta = `💬 Would you like to place an order or speak directly with our team at *${business.phone}*? Let me know how you'd like to proceed!`;
-      }
-
-      let retrievedContent = '';
-      if (isHoursQuery) {
-        retrievedContent = `🕒 *Operating Hours:* We are open *${business.workingHours}*.\nFeel free to drop by or contact our front desk!`;
-      } else if (isLocationQuery) {
-        retrievedContent = `📍 *Store Location:* ${business.businessName}\n${business.address || 'Central Avenue'}\n📞 Contact Desk: *${business.phone}*`;
-      } else if (topCatalogMatch && topCatalogMatch.similarity > 0.35) {
-        const inStock = topCatalogMatch.stock > 0;
-        const stockBadge = inStock
-          ? `✅ In Stock (*${topCatalogMatch.stock} ${topCatalogMatch.unit}* available)`
-          : `⚠️ Currently Out of Stock`;
-        retrievedContent = `📦 *${topCatalogMatch.name}* (\`${topCatalogMatch.sku}\`)\n• Category: *${topCatalogMatch.category}*\n• Price: *${currency}${Number(topCatalogMatch.price).toFixed(2)} / ${topCatalogMatch.unit}*\n• Status: ${stockBadge}\n• Details: ${topCatalogMatch.description || 'Available in our active catalog'}`;
-      } else if (topDocMatch && topDocMatch.similarity > 0.45) {
-        retrievedContent = `📄 *Retrieved from Knowledge Base (${topDocMatch.docName}):*\n${topDocMatch.text}`;
-      } else if (catalogMatches.length > 0) {
-        const top3 = catalogMatches.slice(0, 3).map((item, idx) => 
-          `${idx + 1}. *${item.name}* (${item.sku}) - *${currency}${Number(item.price).toFixed(2)}* (${item.stock > 0 ? 'In Stock' : 'Out of Stock'})`
-        ).join('\n');
-        retrievedContent = `🔍 *Similar items retrieved from our catalog:*\n${top3}`;
-      } else {
-        retrievedContent = `I searched our vector database for "${query}". While no exact item matched, you can ask about our catalog items, pricing, or operating hours (${business.workingHours}).`;
-      }
-
-      synthesizedReply = `${greetingAndQuestion}\n\n${retrievedContent}\n\n${closingCta}`;
-    }
-
-    const matched = (topCatalogMatch && topCatalogMatch.similarity > 0.35) ||
-                    (topDocMatch && topDocMatch.similarity > 0.45) ||
-                    isHoursQuery ||
-                    isLocationQuery;
+    // Ensure final reply strictly uses single asterisks for WhatsApp bold
+    const finalReply = synthesizedReply
+      .replace(/\*\*(.*?)\*\*/g, '*$1*')
+      .replace(/^---+$/gm, '')
+      .trim();
 
     return {
-      matched: !!matched,
-      items: catalogMatches.map((item) => ({
+      matched: true,
+      items: dbCatalogItems.map((item) => ({
         sku: item.sku,
         name: item.name,
         category: item.category,
@@ -250,7 +305,7 @@ Please generate the complete 3-part WhatsApp response now.`;
         unit: item.unit,
         inStock: item.stock > 0
       })),
-      aiGeneratedReply: synthesizedReply
+      aiGeneratedReply: finalReply
     };
   }
 }

@@ -36,7 +36,7 @@ export default function RoiCalculator({ onOpenWizard }: RoiProps) {
             Calculate Your Savings vs Official Meta API
           </h2>
           <p className="text-sm sm:text-base text-slate-400">
-            Slide to your estimated monthly customer chats to see how much money MessageAPI saves your business every year.
+            Slide to your estimated monthly customer chats to see how much money MsgNexa saves your business every year.
           </p>
         </div>
 
@@ -90,10 +90,10 @@ export default function RoiCalculator({ onOpenWizard }: RoiProps) {
               </p>
             </div>
 
-            {/* MessageAPI Cost */}
+            {/* MsgNexa API Cost */}
             <div className="p-6 rounded-2xl bg-emerald-950/50 border-2 border-emerald-500 space-y-2 shadow-lg shadow-emerald-500/10">
               <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
-                MessageAPI Enterprise Gateway
+                MsgNexa API Enterprise Gateway
               </p>
               <div className="text-3xl font-black text-emerald-400">
                 $0.00{" "}

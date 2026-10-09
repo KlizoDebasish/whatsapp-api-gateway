@@ -90,4 +90,54 @@ export class MessageController {
       next(err);
     }
   }
+
+  public static async deleteContact(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.business?.id;
+      const { contactId } = req.params;
+      if (!businessId || !contactId) {
+        res.status(400).json({ success: false, error: 'businessId and contactId are required' });
+        return;
+      }
+      const result = await MessageService.deleteContact(businessId, contactId);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public static async deleteMessages(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.business?.id;
+      const { messageIds } = req.body;
+      if (!businessId || !Array.isArray(messageIds) || messageIds.length === 0) {
+        res.status(400).json({ success: false, error: 'messageIds array is required' });
+        return;
+      }
+      const result = await MessageService.deleteMessages(businessId, messageIds);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public static async togglePinMessage(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.business?.id;
+      const { contactId, messageId, isPinned } = req.body;
+      if (!businessId || !contactId || !messageId) {
+        res.status(400).json({ success: false, error: 'contactId and messageId are required' });
+        return;
+      }
+      const result = await MessageService.togglePinMessage({
+        businessId,
+        contactId,
+        messageId,
+        isPinned
+      });
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  }
 }

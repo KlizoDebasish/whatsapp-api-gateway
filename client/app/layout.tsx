@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MessageAPI — WhatsApp Business Automation & AI Assistant",
+  title: "MsgNexa API — Messaging APIs · AI Agents · RAG · Webhooks · Automation",
   description:
-    "Empower your medicine shop, gym, grocery, or electronics store with automated WhatsApp stock inquiries, prescription orders, and Anti-Ban safe pacing.",
+    "Connect. Automate. Scale. Empower your business with automated WhatsApp stock inquiries, prescription orders, AI agents, RAG, and Anti-Ban safe pacing.",
 };
 
 export default function RootLayout({

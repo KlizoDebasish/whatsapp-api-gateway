@@ -20,6 +20,7 @@ interface PageLoaderProps {
   businessName?: string;
   domain?: string;
   message?: string;
+  durationMs?: number;
 }
 
 const CATEGORY_ICONS: Record<BusinessCategory, { icon: LucideIcon; label: string; gradient: string }> = {
@@ -64,20 +65,53 @@ export default function PageLoader({
   category = "custom",
   businessName,
   domain,
-  message = "Opening workspace..."
+  message = "Opening workspace...",
+  durationMs = 3000
 }: PageLoaderProps) {
   const [mounted, setMounted] = React.useState(false);
+  const [progress, setProgress] = React.useState(0);
+  const [storedInfo, setStoredInfo] = React.useState<{ category?: BusinessCategory; name?: string; domain?: string }>({});
 
   React.useEffect(() => {
     setMounted(true);
-  }, []);
+
+    // Read stored account from localStorage as fallback for immediate brand recognition
+    try {
+      const activeId = localStorage.getItem("messageapi_active_account_id_v2");
+      const rawAccounts = localStorage.getItem("messageapi_business_accounts_v2");
+      if (rawAccounts && activeId) {
+        const parsed = JSON.parse(rawAccounts);
+        const acc = parsed.find((a: any) => a.id === activeId);
+        if (acc) {
+          setStoredInfo({
+            category: acc.category,
+            name: acc.businessName,
+            domain: acc.domain
+          });
+        }
+      }
+    } catch (e) {}
+
+    // Smoothly increment progress to reach 100% across durationMs (3 seconds)
+    const stepMs = 30;
+    const increment = 100 / (durationMs / stepMs);
+    const interval = setInterval(() => {
+      setProgress((prev) => {
+        if (prev >= 100) return 100;
+        return Math.min(100, prev + increment);
+      });
+    }, stepMs);
+
+    return () => clearInterval(interval);
+  }, [durationMs]);
 
   // During SSR and the initial client frame, use default category to guarantee 100% deterministic hydration
-  const effectiveCategory = mounted ? category : "custom";
+  const resolvedCategory = (category && category !== "custom") ? category : (storedInfo.category || category || "custom");
+  const effectiveCategory = mounted ? resolvedCategory : "custom";
   const config = CATEGORY_ICONS[effectiveCategory] || CATEGORY_ICONS.custom;
   const CategoryIcon = config.icon;
-  const displayName = mounted ? businessName : undefined;
-  const displayDomain = mounted ? domain : undefined;
+  const displayName = mounted ? (businessName || storedInfo.name) : undefined;
+  const displayDomain = mounted ? (domain || storedInfo.domain) : undefined;
 
   return (
     <div 
@@ -135,14 +169,20 @@ export default function PageLoader({
 
         {/* Loading Indicator & Progress Bar */}
         <div className="space-y-2.5 pt-1 w-full flex flex-col items-center">
-          <p className="text-xs font-semibold text-slate-400 flex items-center gap-1.5">
+          <p className="text-xs font-semibold text-slate-400 flex items-center gap-2">
             <Sparkles className="w-3.5 h-3.5 text-teal-400 animate-spin" style={{ animationDuration: "3s" }} />
             <span>{message}</span>
+            <span className="text-[10px] font-mono text-teal-400 font-bold">
+              {Math.min(100, Math.round(progress))}%
+            </span>
           </p>
 
           {/* Glowing Animated Loading Bar */}
-          <div className="w-48 h-1.5 bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700/50">
-            <div className="h-full bg-gradient-to-r from-teal-400 via-emerald-400 to-blue-500 rounded-full animate-pulse w-full" />
+          <div className="w-56 h-1.5 bg-slate-800/90 rounded-full overflow-hidden p-0.5 border border-slate-700/60 shadow-inner">
+            <div 
+              style={{ width: `${progress}%` }}
+              className="h-full bg-gradient-to-r from-teal-400 via-emerald-400 to-blue-500 rounded-full transition-all duration-75 ease-out shadow-sm shadow-teal-400/50" 
+            />
           </div>
         </div>
       </div>

@@ -15,4 +15,12 @@ router.get('/contacts', MessageController.getContacts);
 router.get('/conversation/:contactId', MessageController.getMessages);
 router.get('/:contactId', MessageController.getMessages);
 
+// Delete operations
+router.delete('/contacts/:contactId', MessageController.deleteContact);
+router.delete('/conversation/:contactId', MessageController.deleteContact);
+router.delete('/batch-delete', MessageController.deleteMessages);
+
+// Pin message operation
+router.post('/pin', MessageController.togglePinMessage);
+
 export default router;

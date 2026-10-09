@@ -518,6 +518,9 @@ export class RagService {
         if (groqRes.ok) {
           const data = await groqRes.json();
           answer = data.choices?.[0]?.message?.content || '';
+          if (answer) {
+            answer = answer.replace(/\*\*(.*?)\*\*/g, '*$1*').replace(/^---+$/gm, '').trim();
+          }
         }
       } catch (e: any) {
         console.warn('Groq query notice:', e.message);
@@ -532,8 +535,13 @@ export class RagService {
       }
     }
 
+    const finalAnswer = (answer || '')
+      .replace(/\*\*(.*?)\*\*/g, '*$1*')
+      .replace(/^---+$/gm, '')
+      .trim();
+
     return {
-      answer,
+      answer: finalAnswer,
       contextChunks: topChunks,
       model: ENV.GROQ_LLM_MODEL || 'openai/gpt-oss-120b',
       retrievedChunks: topChunks
