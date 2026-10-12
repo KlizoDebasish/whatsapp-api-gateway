@@ -16,6 +16,11 @@ export const metadata: Metadata = {
   title: "MsgNexa API — Messaging APIs · AI Agents · RAG · Webhooks · Automation",
   description:
     "Connect. Automate. Scale. Empower your business with automated WhatsApp stock inquiries, prescription orders, AI agents, RAG, and Anti-Ban safe pacing.",
+  icons: {
+    icon: [{ url: "/MsgNexa.png", type: "image/png" }],
+    shortcut: "/MsgNexa.png",
+    apple: "/MsgNexa.png",
+  },
 };
 
 export default function RootLayout({
@@ -28,6 +33,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <link rel="icon" href="/MsgNexa.png" type="image/png" />
+      </head>
       <body className="min-h-full flex flex-col bg-white text-slate-900 font-sans">{children}</body>
     </html>
   );
