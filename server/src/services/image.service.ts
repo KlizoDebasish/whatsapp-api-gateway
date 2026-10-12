@@ -134,6 +134,16 @@ export const CATEGORY_VISUAL_PROFILES: Record<string, CategoryVisualProfile> = {
   }
 };
 
+export interface ImageOrDocQueryResult {
+  handled: boolean;
+  aiGeneratedReply: string;
+  mediaUrl?: string;
+  imageBuffer?: Buffer;
+  pdfBuffer?: Buffer;
+  fileName?: string;
+  messageType?: 'text' | 'image' | 'document';
+}
+
 export class ImageService {
   /**
    * Detects if the incoming message has an intent to generate an image or visual media
@@ -352,13 +362,7 @@ export class ImageService {
     query: string;
     catalogItems?: Array<{ name: string; category?: string; price?: number }>;
     currency?: string;
-  }): Promise<{
-    handled: boolean;
-    aiGeneratedReply: string;
-    mediaUrl?: string;
-    imageBuffer?: Buffer;
-    messageType?: 'text' | 'image' | 'document';
-  }> {
+  }): Promise<ImageOrDocQueryResult> {
     const { businessName, category, query, catalogItems = [], currency = '₹' } = params;
     const catKey = (category || 'custom').toLowerCase();
     const profile = CATEGORY_VISUAL_PROFILES[catKey] || CATEGORY_VISUAL_PROFILES.custom;
@@ -402,7 +406,7 @@ export class ImageService {
         pdfBuffer: pdfResult.pdfBuffer,
         fileName: pdfResult.fileName,
         aiGeneratedReply: replyText
-      } as any;
+      };
     }
 
     // 2. Image Generation Intent

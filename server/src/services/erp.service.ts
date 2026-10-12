@@ -3,6 +3,27 @@ import { prisma } from '../config/database';
 import { ENV } from '../config/env';
 import { ImageService } from './image.service';
 
+export interface ErpCatalogItem {
+  sku: string;
+  name: string;
+  category: string;
+  price: number;
+  stock: number;
+  unit: string;
+  inStock: boolean;
+}
+
+export interface ErpQueryResult {
+  matched: boolean;
+  items: ErpCatalogItem[];
+  aiGeneratedReply: string;
+  mediaUrl?: string;
+  imageBuffer?: Buffer;
+  pdfBuffer?: Buffer;
+  fileName?: string;
+  messageType?: 'text' | 'image' | 'document';
+}
+
 export class ErpService {
   /**
    * Queries the VectorDB (pgvector catalog embeddings & document chunks) and synthesizes
@@ -12,22 +33,7 @@ export class ErpService {
   public static async queryErp(params: {
     businessId: string;
     query: string;
-  }): Promise<{
-    matched: boolean;
-    items: Array<{
-      sku: string;
-      name: string;
-      category: string;
-      price: number;
-      stock: number;
-      unit: string;
-      inStock: boolean;
-    }>;
-    aiGeneratedReply: string;
-    mediaUrl?: string;
-    imageBuffer?: Buffer;
-    messageType?: 'text' | 'image' | 'document';
-  }> {
+  }): Promise<ErpQueryResult> {
     const { businessId, query } = params;
     const lowerQuery = query.toLowerCase().trim();
 
@@ -71,13 +77,20 @@ export class ErpService {
       orderBy: { name: 'asc' }
     });
 
+    // Safely map Prisma Decimal prices to numbers for Image / Doc processing
+    const mappedCatalogItems = dbCatalogItems.map((item) => ({
+      name: item.name,
+      category: item.category,
+      price: typeof item.price?.toNumber === 'function' ? item.price.toNumber() : Number(item.price)
+    }));
+
     // Check if query is an Image or Document generation request
     const imageDocResult = await ImageService.handleImageOrDocQuery({
       businessId: business.id,
       businessName: business.businessName,
       category: business.category,
       query,
-      catalogItems: dbCatalogItems,
+      catalogItems: mappedCatalogItems,
       currency
     });
 
@@ -88,8 +101,8 @@ export class ErpService {
         aiGeneratedReply: imageDocResult.aiGeneratedReply,
         mediaUrl: imageDocResult.mediaUrl,
         imageBuffer: imageDocResult.imageBuffer,
-        pdfBuffer: (imageDocResult as any).pdfBuffer,
-        fileName: (imageDocResult as any).fileName,
+        pdfBuffer: imageDocResult.pdfBuffer,
+        fileName: imageDocResult.fileName,
         messageType: imageDocResult.messageType || 'text'
       };
     }
@@ -300,7 +313,7 @@ Please generate a helpful and concise WhatsApp response.`;
         sku: item.sku,
         name: item.name,
         category: item.category,
-        price: Number(item.price),
+        price: typeof item.price?.toNumber === 'function' ? item.price.toNumber() : Number(item.price),
         stock: item.stock,
         unit: item.unit,
         inStock: item.stock > 0

@@ -556,7 +556,7 @@ export class SessionService extends EventEmitter {
               const isImage = erpReply.messageType === 'image' || (hasMedia && !erpReply.messageType);
               const isDoc = erpReply.messageType === 'document';
 
-              let replyMediaUrl = erpReply.mediaUrl || null;
+              let replyMediaUrl: string | null = erpReply.mediaUrl || null;
               let replyMessageType: 'IMAGE' | 'DOCUMENT' | 'AUDIO' | 'TEXT' = 'TEXT';
 
               // RULE 1: If someone says create image or pdf -> Send image/pdf (NO audio response)
@@ -570,12 +570,12 @@ export class SessionService extends EventEmitter {
                   return socket.sendMessage(normalizedJid, { text: finalAiReply }).catch(() => null);
                 });
                 replyMessageType = 'IMAGE';
-                replyMediaUrl = erpReply.mediaUrl;
-              } else if (isDoc && (erpReply.mediaUrl || (erpReply as any).pdfBuffer)) {
-                const pdfName = (erpReply as any).fileName || `gym_pdf_${Date.now()}.pdf`;
-                const docPayload: any = (erpReply as any).pdfBuffer
+                replyMediaUrl = erpReply.mediaUrl || null;
+              } else if (isDoc && (erpReply.mediaUrl || erpReply.pdfBuffer)) {
+                const pdfName = erpReply.fileName || `gym_pdf_${Date.now()}.pdf`;
+                const docPayload: any = erpReply.pdfBuffer
                   ? {
-                      document: (erpReply as any).pdfBuffer,
+                      document: erpReply.pdfBuffer,
                       mimetype: 'application/pdf',
                       fileName: pdfName,
                       caption: finalAiReply
@@ -592,7 +592,7 @@ export class SessionService extends EventEmitter {
                   return socket.sendMessage(normalizedJid, { text: finalAiReply }).catch(() => null);
                 });
                 replyMessageType = 'DOCUMENT';
-                replyMediaUrl = erpReply.mediaUrl;
+                replyMediaUrl = erpReply.mediaUrl || null;
               } else if (isVoiceInbound) {
                 // RULE 2: ONLY if user sent an AUDIO voice message AND query is normal -> Respond with voice note + text attached
                 try {
