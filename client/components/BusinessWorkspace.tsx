@@ -2092,6 +2092,64 @@ export default function BusinessWorkspace({
     { id: "settings" as DashboardTab, label: "Settings", shortLabel: "Settings", icon: Settings },
   ];
 
+  const handleDownloadPdf = async (e: React.MouseEvent, docUrl: string, targetName: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const finalName = targetName.endsWith(".pdf") ? targetName : `${targetName}.pdf`;
+
+    // 1. First attempt: Direct fetch to blob for instant in-browser download
+    try {
+      const res = await fetch(docUrl, { mode: "cors" });
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob && blob.size > 0) {
+          const blobUrl = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = finalName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => window.URL.revokeObjectURL(blobUrl), 2000);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("Direct blob fetch failed, falling back to backend download stream:", err);
+    }
+
+    // 2. Second attempt: Download via backend streaming endpoint
+    const backendDownloadUrl = `${BACKEND_URL}/api/v1/media/pdf/${encodeURIComponent(finalName)}`;
+    try {
+      const res = await fetch(backendDownloadUrl);
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob && blob.size > 0) {
+          const blobUrl = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = finalName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => window.URL.revokeObjectURL(blobUrl), 2000);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("Backend stream blob fetch failed, falling back to direct anchor:", err);
+    }
+
+    // 3. Fallback: Direct anchor click to backend download route
+    const dlLink = document.createElement("a");
+    dlLink.href = backendDownloadUrl;
+    dlLink.setAttribute("download", finalName);
+    document.body.appendChild(dlLink);
+    dlLink.click();
+    dlLink.remove();
+  };
+
   return (
     <div className="h-screen max-h-screen bg-slate-50/70 text-slate-800 flex flex-col md:flex-row font-sans selection:bg-teal-500 selection:text-white overflow-hidden">
       {/* PROFESSIONAL DASHBOARD SIDEBAR (COLLAPSIBLE) */}
@@ -2132,7 +2190,7 @@ export default function BusinessWorkspace({
               <div className="p-2 rounded-[5px] bg-emerald-50/80 border border-emerald-200 flex items-center justify-between text-[11px]">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="font-semibold text-emerald-900">Messageapp Web</span>
+                  <span className="font-semibold text-emerald-900">MsgNexa</span>
                 </div>
                 <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-[5px] font-bold border border-emerald-300">
                   Connected
@@ -3414,12 +3472,12 @@ export default function BusinessWorkspace({
                       normalizedType === "document" ||
                       !!pdfUrlMatch ||
                       !!pdfNameMatch ||
-                      (!!m.mediaUrl && (/\.pdf($|\?)/i.test(m.mediaUrl) || m.mediaUrl.includes("gym_pdf") || m.mediaUrl.includes("/raw/upload"))) ||
+                      (!!m.mediaUrl && (/\.pdf($|\?)/i.test(m.mediaUrl) || m.mediaUrl.includes("_pdf_") || m.mediaUrl.includes("/raw/upload"))) ||
                       m.text.includes("[PDF Document]") ||
                       m.text.includes("[PDF_NAME:") ||
                       m.text.includes("[PDF_URL:") ||
                       m.text.includes("official PDF document") ||
-                      m.text.includes("Document:* gym_pdf");
+                      (m.text.includes("Document:*") && m.text.includes(".pdf"));
 
                     const isVoice =
                       normalizedType === "audio" ||
@@ -3447,7 +3505,7 @@ export default function BusinessWorkspace({
                         !!imageUrlMatch ||
                         /\.(jpg|jpeg|png|webp|gif)($|\?)/i.test(resolvedImageUrl) ||
                         resolvedImageUrl.includes("/uploads/gen_image") ||
-                        (resolvedImageUrl.includes("cloudinary.com") && !resolvedImageUrl.includes("/raw/upload") && !resolvedImageUrl.includes(".pdf") && !resolvedImageUrl.includes("gym_pdf")));
+                        (resolvedImageUrl.includes("cloudinary.com") && !resolvedImageUrl.includes("/raw/upload") && !resolvedImageUrl.includes(".pdf") && !resolvedImageUrl.includes("_pdf_")));
 
                     const rawDocUrl = pdfUrlMatch
                       ? pdfUrlMatch[1]
@@ -3457,15 +3515,15 @@ export default function BusinessWorkspace({
                       ? (rawDocUrl.startsWith("http") ? rawDocUrl : `${BACKEND_URL}${rawDocUrl}`)
                       : "";
 
-                    const downloadDocUrl = resolvedDocUrl.includes("res.cloudinary.com") && resolvedDocUrl.includes("/upload/")
-                      ? resolvedDocUrl.replace("/upload/", "/upload/fl_attachment/")
-                      : resolvedDocUrl;
+                    const downloadDocUrl = resolvedDocUrl;
+
+                    const fallbackCat = (account?.category || "document").toLowerCase().replace(/[^a-z0-9]/g, "_") || "document";
 
                     let docName = pdfNameMatch
                       ? pdfNameMatch[1].trim()
-                      : (rawDocUrl && (rawDocUrl.includes(".pdf") || rawDocUrl.includes("gym_pdf"))
+                      : (rawDocUrl && (rawDocUrl.includes(".pdf") || rawDocUrl.includes("_pdf_"))
                           ? rawDocUrl.split("/").pop()?.split("?")[0] || ""
-                          : `gym_pdf_${Date.now()}.pdf`);
+                          : `${fallbackCat}_pdf_${Date.now()}.pdf`);
 
                     if (docName && !docName.endsWith(".pdf")) {
                       docName = `${docName}.pdf`;
@@ -3562,18 +3620,15 @@ export default function BusinessWorkspace({
                                 </div>
 
                                 {resolvedDocUrl && (
-                                  <a
-                                    href={downloadDocUrl}
-                                    download={docName}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDownloadPdf(e, resolvedDocUrl, docName)}
                                     className="flex-shrink-0 py-1.5 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
-                                    title="Download PDF"
+                                    title={`Download ${docName}`}
                                   >
                                     <Download className="w-3.5 h-3.5" />
                                     <span>Download</span>
-                                  </a>
+                                  </button>
                                 )}
                               </div>
                             </div>

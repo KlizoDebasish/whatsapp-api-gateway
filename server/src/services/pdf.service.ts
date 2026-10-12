@@ -25,22 +25,82 @@ export class PdfService {
    */
   public static buildPdfBuffer(params: GeneratePdfParams): { buffer: Buffer; fileName: string } {
     const { businessName, category, subject, catalogItems = [], currency = '₹' } = params;
+    const catLower = (category || 'custom').toLowerCase().trim();
+    // Dynamic category key for filename: "medicine", "gym", "grocery", "electronics", etc.
+    const catKey = (catLower === 'pharmacy' || catLower === 'pharma' ? 'medicine' : catLower)
+      .replace(/[^a-z0-9]/g, '_')
+      .replace(/^_+|_+$/g, '') || 'document';
     const timestamp = Date.now();
-    const fileName = `gym_pdf_${timestamp}.pdf`;
+    const fileName = `${catKey}_pdf_${timestamp}.pdf`;
 
     const cleanBiz = (businessName || 'Business Hub').trim();
     const cleanSub = (subject || 'Digital Guide').trim();
     const dateStr = new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    // Generate dynamic textual sections according to requested topic
+    // Generate dynamic textual sections according to requested topic & category
     const lowerSub = cleanSub.toLowerCase();
+    const isMedicine = catLower === 'medicine' || catLower === 'pharmacy' || catLower === 'pharma' ||
+      cleanBiz.toLowerCase().includes('pharmacy') || cleanBiz.toLowerCase().includes('pharma') || cleanBiz.toLowerCase().includes('med') ||
+      lowerSub.includes('medicine') || lowerSub.includes('drug') || lowerSub.includes('prescription') || lowerSub.includes('dose') || lowerSub.includes('otc');
+
+    const isGym = catLower === 'gym' || catLower === 'fitness' ||
+      cleanBiz.toLowerCase().includes('gym') || cleanBiz.toLowerCase().includes('fit') ||
+      lowerSub.includes('workout') || lowerSub.includes('exercise') || lowerSub.includes('fitness');
+
     const isDiet = lowerSub.includes('diet') || lowerSub.includes('nutrition') || lowerSub.includes('meal') || lowerSub.includes('food');
-    const isTraining = lowerSub.includes('training') || lowerSub.includes('workout') || lowerSub.includes('exercise') || lowerSub.includes('fitness') || lowerSub.includes('routine');
+    const isTraining = lowerSub.includes('training') || lowerSub.includes('workout') || lowerSub.includes('exercise') || lowerSub.includes('routine');
+
+    const isGrocery = catLower === 'grocery' || catLower === 'supermarket' ||
+      cleanBiz.toLowerCase().includes('mart') || cleanBiz.toLowerCase().includes('fresh') || cleanBiz.toLowerCase().includes('grocery');
+
+    const isElectronics = catLower === 'electronics' || catLower === 'tech' ||
+      cleanBiz.toLowerCase().includes('gadget') || cleanBiz.toLowerCase().includes('electronics') || cleanBiz.toLowerCase().includes('tech');
+
+    const isRestaurant = catLower === 'restaurant' || catLower === 'cafe' || catLower === 'food' ||
+      cleanBiz.toLowerCase().includes('cafe') || cleanBiz.toLowerCase().includes('bistro') || cleanBiz.toLowerCase().includes('restaurant');
+
+    const isSalon = catLower === 'salon' || catLower === 'spa' || catLower === 'beauty' ||
+      cleanBiz.toLowerCase().includes('salon') || cleanBiz.toLowerCase().includes('spa');
 
     const sections: Array<{ title: string; lines: string[] }> = [];
 
-    if (isDiet) {
+    if (isMedicine) {
+      sections.push({
+        title: "1. OVER-THE-COUNTER (OTC) VS. PRESCRIPTION (RX) MEDICINES",
+        lines: [
+          "• Over-the-Counter (OTC): Safe for self-care of mild symptoms without a doctor prescription (e.g. Paracetamol, antacids, ORS, cetirizine)",
+          "• Prescription Drugs (Rx): Require diagnosis & ongoing monitoring by a registered doctor (e.g. Antibiotics, cardiovascular, anti-diabetics)",
+          "• Scheduled Drugs (Schedule H / X): Dispensed strictly on valid prescription; record keeping enforced by pharmacy regulations",
+          "• Critical Safety Rule: Never discontinue or alter prescription medication doses without consulting your doctor"
+        ]
+      });
+      sections.push({
+        title: "2. COMMON DOSAGE FORMS & ADMINISTRATION PROTOCOLS",
+        lines: [
+          "• Oral Solid Dosage (Tablets / Capsules): Take with a full glass of water; swallow intact unless labeled chewable or dispersible",
+          "• Oral Liquids (Syrups / Suspensions): Shake suspensions well before measuring; always use calibrated dosing syringes or spoons",
+          "• Inhalers & Respules: Rinse mouth with water after inhaled corticosteroid usage to prevent oral irritation",
+          "• Topicals (Ointments / Creams / Gels): Apply a thin, even film on clean, dry affected skin as prescribed"
+        ]
+      });
+      sections.push({
+        title: "3. SAFE STORAGE, EXPIRY & PATIENT GUIDELINES",
+        lines: [
+          "• Storage: Keep below 25°C away from direct sunlight, moisture, and strictly out of reach of children",
+          "• Missed Dose: Take as soon as remembered, unless close to your next scheduled dose; never double up doses",
+          "• Pharmacist Consultation: Consult our front desk pharmacist before combining supplements with prescription drugs"
+        ]
+      });
+      if (catalogItems.length > 0) {
+        sections.push({
+          title: "4. ESSENTIAL PHARMACY STOCK & PRICING",
+          lines: catalogItems.slice(0, 5).map(item =>
+            `• ${item.name} (${item.category || 'Medicine'}) - ${currency}${Number(item.price || 0).toFixed(2)}${item.unit ? ' / ' + item.unit : ''}`
+          )
+        });
+      }
+    } else if (isDiet) {
       sections.push({
         title: "1. DAILY MACRONUTRIENT & CALORIC TARGETS",
         lines: [
@@ -70,7 +130,7 @@ export class PdfService {
           "• Rest & Digestion: Sleep 7 - 8 hours uninterrupted for peak metabolic recovery"
         ]
       });
-    } else if (isTraining) {
+    } else if (isTraining || isGym) {
       sections.push({
         title: "1. 1-ON-1 TRAINING PROGRAM OVERVIEW",
         lines: [
@@ -98,26 +158,125 @@ export class PdfService {
           "• Direct Trainer WhatsApp support for form videos and recovery advice"
         ]
       });
-    } else {
-      // General catalog & membership options
-      const itemLines = catalogItems.slice(0, 7).map((item) =>
-        `• ${item.name} (${item.category || 'General'}) - ${currency}${Number(item.price || 0).toLocaleString()} ${item.unit ? '/ ' + item.unit : ''}`
-      );
+    } else if (isGrocery) {
       sections.push({
-        title: "1. OFFICIAL SERVICES & ITEM CATALOG",
-        lines: itemLines.length > 0 ? itemLines : [
-          `• Standard All-Access Monthly Membership - ${currency}1,499 / month`,
-          `• Annual Elite Fitness VIP Pass - ${currency}12,999 / year`,
-          `• 1-on-1 Certified Personal Training (12 Sessions) - ${currency}4,500 / month`,
-          `• Nutrition Consultation & Macro Meal Planning - ${currency}1,200 / consultation`
+        title: "1. FRESH PRODUCE & FARM-TO-SHELF QUALITY STANDARDS",
+        lines: [
+          "• Daily Fresh Harvest: Organic vegetables, seasonal fruits, and greens sourced directly from certified farms",
+          "• Quality Inspection: Hand-graded, temperature-monitored produce to ensure peak nutritional crispness",
+          "• Storage Tip: Keep greens dry and ventilated; store root vegetables in cool, dark pantry spaces"
         ]
       });
       sections.push({
-        title: "2. CLIENT BENEFITS & FACILITY AMENITIES",
+        title: "2. PANTRY STAPLES, DAIRY & REFRIGERATION SAFETY",
         lines: [
-          "• Full access to high-end Olympic barbells, dumbbell racks up to 50kg, and cardio zones",
-          "• Locker rooms, steam shower access, and dedicated personal stretching zones",
-          "• Free bi-weekly fitness assessment & trainer form consultation"
+          "• Dairy Protocols: Pasteurized milk, farm eggs, and fresh dairy maintained at strict 2°C - 4°C cold-chain standards",
+          "• Whole Grains & Pulses: Vacuum-packed unpolished dals, premium basmati rice, and organic flours",
+          "• Fast Home Delivery: Same-day express dispatch available directly via our WhatsApp catalog"
+        ]
+      });
+      if (catalogItems.length > 0) {
+        sections.push({
+          title: "3. FEATURED STORE ITEMS & LIVE PRICES",
+          lines: catalogItems.slice(0, 5).map(item =>
+            `• ${item.name} (${item.category || 'Grocery'}) - ${currency}${Number(item.price || 0).toFixed(2)}${item.unit ? ' / ' + item.unit : ''}`
+          )
+        });
+      }
+    } else if (isElectronics) {
+      sections.push({
+        title: "1. DEVICE SPECIFICATIONS & AUTHENTICITY ASSURANCE",
+        lines: [
+          "• 100% Genuine Certified Hardware with original manufacturer seals and serial verification",
+          "• Performance Testing: High-grade component testing, battery integrity audits, and firmware compliance",
+          "• Accessories: Fast chargers, braided cables, and protective tempered glass available in-store"
+        ]
+      });
+      sections.push({
+        title: "2. OFFICIAL WARRANTY, CARE & SERVICE SUPPORT",
+        lines: [
+          "• Manufacturer Warranty: 1-Year comprehensive brand warranty + official invoice support",
+          "• Battery Longevity: Avoid overnight charging above 80% to preserve lithium-ion battery health cycles",
+          "• Repair & Replacement: Express counter diagnostics and authorized brand replacement assistance"
+        ]
+      });
+      if (catalogItems.length > 0) {
+        sections.push({
+          title: "3. POPULAR GADGETS & LIVE INVENTORY",
+          lines: catalogItems.slice(0, 5).map(item =>
+            `• ${item.name} (${item.category || 'Electronics'}) - ${currency}${Number(item.price || 0).toFixed(2)}${item.unit ? ' / ' + item.unit : ''}`
+          )
+        });
+      }
+    } else if (isRestaurant) {
+      sections.push({
+        title: "1. CHEF'S SIGNATURE MENU & CULINARY HIGHLIGHTS",
+        lines: [
+          "• Artisanal Preparation: Made-to-order dishes using farm-fresh, seasonal herbs and premium ingredients",
+          "• Hygiene & Safety: FSSAI-compliant kitchen standards with sanitized prep stations and filtered water",
+          "• Dining & Takeaway: Dine-in table reservations, express curbside pickup, and hot doorstep delivery"
+        ]
+      });
+      sections.push({
+        title: "2. DIETARY CHOICES & ALLERGEN ADVICE",
+        lines: [
+          "• Custom Preparations: Gluten-free, vegan, low-sugar, and keto-friendly options available upon request",
+          "• Allergen Warning: Please notify our kitchen staff about nut, dairy, or gluten sensitivities when ordering",
+          "• Special Events & Catering: Custom party platters and celebratory meal bundles"
+        ]
+      });
+      if (catalogItems.length > 0) {
+        sections.push({
+          title: "3. POPULAR MENU SELECTIONS & PRICING",
+          lines: catalogItems.slice(0, 5).map(item =>
+            `• ${item.name} (${item.category || 'Special'}) - ${currency}${Number(item.price || 0).toFixed(2)}`
+          )
+        });
+      }
+    } else if (isSalon) {
+      sections.push({
+        title: "1. PROFESSIONAL SALON SERVICES & BEAUTY MENU",
+        lines: [
+          "• Certified Stylists: Customized haircuts, keratin hair spa, scalp detox, and therapeutic facials",
+          "• Premium Product Lines: Ammonia-free organic hair colors and dermatologist-tested skincare serums",
+          "• Hygiene Protocol: Autoclave-sterilized tools, single-use disposable capes, and sanitized stations"
+        ]
+      });
+      sections.push({
+        title: "2. POST-TREATMENT AFTERCARE REGIMEN",
+        lines: [
+          "• Hair Care: Use sulfate-free shampoo for 72 hours post-coloring to preserve pigment vibrancy",
+          "• Skin Protection: Apply broad-spectrum SPF 50+ sunscreen daily following professional facials or peels",
+          "• Appointments: Pre-book your slot via WhatsApp for zero waiting time"
+        ]
+      });
+      if (catalogItems.length > 0) {
+        sections.push({
+          title: "3. SERVICE PACKAGES & PRICING",
+          lines: catalogItems.slice(0, 5).map(item =>
+            `• ${item.name} (${item.category || 'Service'}) - ${currency}${Number(item.price || 0).toFixed(2)}`
+          )
+        });
+      }
+    } else {
+      // General / Custom Business Catalog
+      const itemLines = catalogItems.slice(0, 6).map((item) =>
+        `• ${item.name} (${item.category || 'General'}) - ${currency}${Number(item.price || 0).toLocaleString()} ${item.unit ? '/ ' + item.unit : ''}`
+      );
+      sections.push({
+        title: "1. OFFICIAL PRODUCTS & SERVICE DIRECTORY",
+        lines: itemLines.length > 0 ? itemLines : [
+          `• Standard Service Package - ${currency}1,499`,
+          `• Annual Priority Support Pass - ${currency}12,999`,
+          `• 1-on-1 Personalized Consultation - ${currency}4,500`
+        ]
+      });
+      sections.push({
+        title: "2. SERVICE ASSURANCE & CUSTOMER COMMITMENT",
+        lines: [
+          "• 100% Quality Guaranteed on all official orders and professional services",
+          "• Dedicated Customer Assistance available directly on WhatsApp 24/7",
+          "• Fast billing, transparent quotes, and immediate digital receipt generation"
         ]
       });
     }

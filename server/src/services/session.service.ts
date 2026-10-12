@@ -572,7 +572,8 @@ export class SessionService extends EventEmitter {
                 replyMessageType = 'IMAGE';
                 replyMediaUrl = erpReply.mediaUrl || null;
               } else if (isDoc && (erpReply.mediaUrl || erpReply.pdfBuffer)) {
-                const pdfName = erpReply.fileName || `gym_pdf_${Date.now()}.pdf`;
+                const catKey = (business?.category || 'document').toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/^_+|_+$/g, '') || 'document';
+                const pdfName = erpReply.fileName || `${catKey}_pdf_${Date.now()}.pdf`;
                 const docPayload: any = erpReply.pdfBuffer
                   ? {
                       document: erpReply.pdfBuffer,

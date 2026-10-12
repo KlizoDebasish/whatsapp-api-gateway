@@ -605,7 +605,7 @@ export function McpDocInfoTab({ account }: McpDocInfoTabProps) {
 
               <div className="flex items-center gap-2">
                 <span className="text-xs font-mono text-slate-600 bg-slate-100 px-3 py-1 rounded-lg border border-slate-200">
-                  Base: http://localhost:5000/api/v1
+                  Base: {process.env.NEXT_PUBLIC_API_URL}
                 </span>
               </div>
             </div>
