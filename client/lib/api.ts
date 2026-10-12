@@ -238,14 +238,6 @@ export class MessageApiClient {
     return res.json();
   }
 
-  public static async refreshQr(sessionId: string, apiKey: string) {
-    const res = await fetch(`${API_BASE_URL}/sessions/${sessionId}/refresh-qr`, {
-      method: 'POST',
-      headers: this.getHeaders(apiKey)
-    });
-    return res.json();
-  }
-
   /**
    * Real Contacts & Message History
    */

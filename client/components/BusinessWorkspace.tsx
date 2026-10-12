@@ -415,7 +415,7 @@ export default function BusinessWorkspace({
       window.speechSynthesis.cancel();
       const clean = textFallback
         .replace(/🎙️\s*\[.*?\]\s*/, "")
-        .replace(/^\[User sent a voice message\.\s*Transcript:\s*"(.*?)"\]$/s, "$1")
+        .replace(/^\[User sent a voice message\.\s*Transcript:\s*"([\s\S]*?)"\]$/, "$1")
         .replace(/[*_#~]/g, "")
         .trim();
       const utterance = new SpeechSynthesisUtterance(clean);
@@ -492,6 +492,7 @@ export default function BusinessWorkspace({
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [newContactName, setNewContactName] = useState("");
   const [newContactPhone, setNewContactPhone] = useState("");
+  const [newContactTag, setNewContactTag] = useState("Active Inquiry");
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
 
   // Contact Deletion Modal State
@@ -572,6 +573,7 @@ export default function BusinessWorkspace({
     } catch (e) {}
     setNewContactName("");
     setNewContactPhone("");
+    setNewContactTag("Active Inquiry");
     setShowAddChatModal(false);
     setChatMenuOpen(false);
   };
@@ -3477,7 +3479,7 @@ export default function BusinessWorkspace({
                       .trim();
 
                     // Parse potential voice message transcript
-                    const voiceTranscriptMatch = cleanedText.match(/\[User sent a voice message\.\s*Transcript:\s*"(.*?)"\]/s);
+                    const voiceTranscriptMatch = cleanedText.match(/\[User sent a voice message\.\s*Transcript:\s*"([\s\S]*?)"\]/);
                     const voiceTranscript = voiceTranscriptMatch ? voiceTranscriptMatch[1] : null;
                     const displaySpeechText = voiceTranscript || cleanedText.replace(/🎙️\s*\[.*?\]\s*/, "").trim();
 
