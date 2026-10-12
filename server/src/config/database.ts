@@ -45,13 +45,15 @@ export async function connectDatabase(): Promise<void> {
         `);
         console.log('🔐 User auth, domain, and message isPinned schema verified / updated.');
 
-        // Regenerate Prisma Client in background if needed
-        try {
-          const { exec } = await import('child_process');
-          exec('npx prisma generate', (err) => {
-            if (!err) console.log('✨ Prisma Client regenerated with isPinned & pinnedMessageId.');
-          });
-        } catch {}
+        // Regenerate Prisma Client in background if needed (development only)
+        if (ENV.NODE_ENV !== 'production') {
+          try {
+            const { exec } = await import('child_process');
+            exec('npx prisma generate', (err) => {
+              if (!err) console.log('✨ Prisma Client regenerated with isPinned & pinnedMessageId.');
+            });
+          } catch {}
+        }
       } catch (err: any) {
         console.warn('⚠️ User auth migration notice:', err.message);
       }

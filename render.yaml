@@ -19,6 +19,9 @@ services:
       - key: PORT
         value: 10000
 
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=460"
+
       - key: API_SECRET_KEY
         generateValue: true
 

@@ -10,8 +10,14 @@
     "strict": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "sourceMap": true
+    "sourceMap": false,
+    "declaration": false,
+    "incremental": false,
+    "maxNodeModuleJsDepth": 0,
+    "assumeChangesOnlyAffectDirectDependencies": true,
+    "disableSourceOfProjectReferenceRedirect": true,
+    "types": ["node", "express", "cors", "pg", "qrcode"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "prisma"]
+  "exclude": ["node_modules", "dist", "prisma", "src/mcp"]
 }
